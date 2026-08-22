@@ -15,8 +15,45 @@ at a time and hitting the failure modes that only show up at that volume.
 | [Quality screening](docs/03-quality-screening.md) | Detecting broken tracks automatically — and being honest about what a machine cannot judge |
 | [Playlist sequencing](docs/04-playlist-sequencing.md) | Picking track 1, ordering the rest, and why loudness normalization goes *down* |
 
-Templates for each are in [`templates/`](templates/). A working implementation of the
-screening and sequencing tooling is in [`tools/track-picker/`](tools/track-picker/).
+Blank templates are in [`templates/`](templates/), and [`examples/`](examples/) has all of
+them filled in for one complete episode. A working implementation of the screening and
+sequencing tooling is in [`tools/track-picker/`](tools/track-picker/).
+
+## What this is and isn't
+
+Two halves, with very different levels of automation:
+
+**The tooling runs by itself.** Point [`track-picker`](tools/track-picker/) at a folder of
+audio and it screens, scores, picks between takes, sequences, and level-matches without
+supervision.
+
+**The prompting half is a method, not a machine.** There is no code here that invents a
+style, picks a topic, or writes your tracklist. The templates have blanks in them, and
+filling those blanks is the creative work. What the docs give you is the *shape* of a
+prompt that works and the list of failures to design around.
+
+So: this will not reproduce anyone's channel. It will let you build your own on the same
+scaffolding.
+
+## Using it with an LLM
+
+The templates are designed to be filled by a language model with the docs in context.
+That is the intended workflow, and it is why the docs state their reasoning rather than
+just their conclusions.
+
+1. Give the model [`docs/01-song-prompting.md`](docs/01-song-prompting.md),
+   [`docs/02-thumbnail-prompting.md`](docs/02-thumbnail-prompting.md), and the
+   [worked example](examples/).
+2. Describe your channel — genre, place, character, palette, season — and ask it to fill
+   [`templates/episode-brief.md`](templates/episode-brief.md).
+3. Have it expand the brief into per-track prompts, checking each against the seven-part
+   skeleton and the negative-list groups.
+4. Generate, then run the screening tool on the results.
+
+Steps 2 and 3 are where the judgment lives: deciding that this episode is a winter branch
+line at dusk rather than a summer riverside, that the hook should be a fingerpicked guitar
+rather than a Rhodes, that track 7 carries the motif fragment. A model can do that well
+with the method in front of it. Neither the method nor the model does it unprompted.
 
 ## The core problem
 
@@ -36,7 +73,7 @@ The method here exists to catch all of that before publishing.
 ## The pipeline
 
 ```
-episode brief
+episode brief  ← the only place season, palette, and identity are decided
      │
      ├─→ song prompts (one per track, from a shared global prompt)
      │        │
