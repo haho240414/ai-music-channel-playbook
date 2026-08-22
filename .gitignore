@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.venv/
+venv/
+
+# Working output — audio and reports are not part of the repo
+audio/
+playlist/
+*.m4a
+*.mp3
+*.wav
+*.flac
+tracks.json
+analysis.json
+REPORT.md
+!docs/**/*.md

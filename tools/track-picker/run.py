@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+"""Track screening and playlist sequencing pipeline.
+
+Usage
+  # 1) Run collect.js in the generator's browser tab, save the JSON as tracks.json
+  # 2) Download, analyze, screen, sequence, and export in one pass
+  python3 run.py --urls tracks.json --out ./ep06 --episode "Episode Name" --export
+
+  # Or analyze a folder of audio you already have
+  python3 run.py --dir ./audio --out ./report --episode "Episode Name"
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from analyze import analyze_file          # noqa: E402
+from export import export_playlist, timestamp_lines  # noqa: E402
+from score import pick_best_takes, score_cohort  # noqa: E402
+from sequence import build_playlist       # noqa: E402
+
+AUDIO_EXT = (".m4a", ".mp3", ".wav", ".aac", ".flac", ".ogg")
+CLOSER_HINTS = ["walking home", "going home", "last", "packed", "closing", "end", "goodnight"]
+
+
+def slug(s: str, i: int) -> str:
+    s = re.sub(r"[^\w \-]", "", s, flags=re.UNICODE).strip().replace(" ", "_")[:48]
+    return f"{i:02d}_{s or 'track'}"
+
+
+def download(urls_json: str, audio_dir: str) -> list[dict]:
+    """Download every audio URL from a collect.js result and return job metadata."""
+    with open(urls_json, encoding="utf-8") as f:
+        entries = json.load(f)
+
+    os.makedirs(audio_dir, exist_ok=True)
+    jobs = []
+    for i, e in enumerate(entries, 1):
+        title = e.get("title") or f"track{i}"
+        bpm = e.get("target_bpm")
+        for j, url in enumerate(e.get("urls") or []):
+            name = slug(title, i) + (f"_take{j+1}" if len(e["urls"]) > 1 else "") + ".m4a"
+            jobs.append({"url": url, "path": os.path.join(audio_dir, name),
+                         "title": title, "target_bpm": bpm, "tags": e.get("tags")})
+
+    def fetch(job):
+        if os.path.exists(job["path"]) and os.path.getsize(job["path"]) > 10000:
+            return job
+        req = urllib.request.Request(job["url"], headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=90) as r, open(job["path"], "wb") as out:
+            out.write(r.read())
+        return job
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        list(ex.map(fetch, jobs))
+    print(f"  downloaded {len(jobs)} files -> {audio_dir}")
+    return jobs
+
+
+def collect_from_dir(audio_dir: str) -> list[dict]:
+    jobs = []
+    for name in sorted(os.listdir(audio_dir)):
+        if name.lower().endswith(AUDIO_EXT):
+            title = re.sub(r"^\d+_", "", os.path.splitext(name)[0])
+            # Strip take markers (_take2, _a, _b, -2) so takes of one track group together.
+            title = re.sub(r"(_take\d+|_v\d+|[_-][a-d]|[_-]\d)$", "", title, flags=re.I)
+            title = title.replace("_", " ").strip()
+            jobs.append({"path": os.path.join(audio_dir, name),
+                         "title": title, "target_bpm": None})
+    return jobs
+
+
+TIER_ICON = {"GREEN": "🟢", "YELLOW": "🟡", "RED": "🔴"}
+
+
+def write_report(out_dir, episode, playlist, kept, dropped, all_results,
+                 export_rows=None, common_lufs=None):
+    lines = [f"# {episode} — screening and sequencing report", ""]
+    lines += [f"- Files analyzed: **{len(all_results)}**",
+              f"- After take selection: **{len(kept)}**",
+              f"- Final playlist: **{len(playlist)}**", ""]
+
+    lines += ["## Playlist order", "",
+              "| # | Track | Grade | Score | BPM | Key | LUFS | Transition |",
+              "|---|---|---|---|---|---|---|---|"]
+    for t in playlist:
+        tr = t.get("transition")
+        trs = "—" if not tr else (f"ΔBPM {tr['d_bpm']:+.0f} · key dist {tr['key_dist']:.0f}"
+                                  f" · Δ{tr['d_energy_lu']:+.1f} LU")
+        conf = t["key"].get("confidence", 1.0)
+        kmark = "" if conf >= 0.5 else "?"  # marks a low-confidence key estimate
+        lines.append(
+            f"| {t['position']} | {t.get('title', t['file'])} | {TIER_ICON[t['tier']]} | "
+            f"{t['score']:.0f} | {t['tempo']['bpm'] or '?'} | {t['key']['key'] or '?'}"
+            f"{kmark} ({t['key']['camelot'] or '?'}) | {t['loudness'].get('lufs', '?')} | {trs} |"
+        )
+
+    if playlist:
+        top = playlist[0]
+        lines += ["", f"**Why this opens** — `{top.get('title', top['file'])}`: "
+                      f"score {top['score']:.0f}, hook {top['subscores']['hook']:.0f}/22 "
+                      f"(full energy at {top['metrics']['time_to_full_s']}s, "
+                      f"onset density {top['metrics']['onset_density_5s']}/s in the first 5s), "
+                      f"motif repetition {top['subscores']['motif']:.0f}/18.", ""]
+
+    lines += ["## Per-track detail", "",
+              "| Track | Grade | Score | Hook | Motif | Pulse | Spectral | Dynamics | "
+              "Stereo | Loudness | Defects |",
+              "|---|---|---|---|---|---|---|---|---|---|---|"]
+    chosen = {id(t) for t in playlist}
+    for r in sorted(all_results, key=lambda x: -x.get("score", 0)):
+        s = r.get("subscores", {})
+        real = [d for d in r["defects"] if d["severity"] != "info"]
+        dfx = "; ".join(f"{d['type']}({d['severity']})" for d in real) or "none"
+        mark = "" if id(r) in chosen else " *(not used)*"
+        lines.append(
+            f"| {r.get('title', r['file'])}{mark} | {TIER_ICON[r['tier']]} | {r.get('score', 0):.0f} | "
+            f"{s.get('hook', 0):.0f} | {s.get('motif', 0):.0f} | {s.get('pulse', 0):.0f} | "
+            f"{s.get('spectral', 0):.0f} | {s.get('dynamics', 0):.0f} | {s.get('stereo', 0):.0f} | "
+            f"{s.get('loudness', 0):.0f} | {dfx} |"
+        )
+
+    if export_rows:
+        stamps, total = timestamp_lines(export_rows)
+        h, rem = divmod(int(total), 3600)
+        m, s = divmod(rem, 60)
+        dur = f"{h}h {m}m {s}s" if h else f"{m}m {s}s"
+        lines += ["", "## Deliverables (playlist/)", "",
+                  f"Numbered files level-matched to **{common_lufs} LUFS**, plus "
+                  f"`playlist.m3u`. Total runtime **{dur}**.", "",
+                  "> The target is not -14 LUFS because AI-generated tracks arrive already "
+                  "peak-limited: raising them clamps against the true-peak ceiling by a "
+                  "different amount per track, leaving the spread intact. Instead every "
+                  "track is brought down to the highest level all of them can reach. "
+                  "Playback loudness is normalized by the platform anyway.", "",
+                  "| # | File | Original LUFS | Gain applied |", "|---|---|---|---|"]
+        for r in export_rows:
+            lines.append(f"| {r['position']} | `{r['file']}` | {r['lufs_before']} | "
+                         f"{r['gain_db']:+.2f} dB |")
+        lines += ["", "### Chapter timestamps", "", "```"] + stamps + ["```"]
+
+    spots = [r for r in all_results if r.get("spot_check")]
+    if spots:
+        lines += ["", "## Spot-check points (not defects — may be intentional)", ""]
+        for r in spots:
+            for sc in r["spot_check"]:
+                lines.append(f"- `{r.get('title', r['file'])}` — {sc}")
+
+    if dropped:
+        lines += ["", "## Dropped takes", ""]
+        for d in dropped:
+            lines.append(f"- `{d['file']}` — {d.get('dropped_reason', '')} "
+                         f"(score {d.get('score', 0):.0f})")
+
+    reds = [r for r in all_results if r["tier"] == "RED"]
+    if reds:
+        lines += ["", "## Regenerate (RED)", ""]
+        for r in reds:
+            for d in r["defects"]:
+                if d["severity"] == "severe":
+                    lines.append(f"- `{r.get('title', r['file'])}` — **{d['type']}**: {d['detail']}")
+
+    lines += ["", "---", "",
+              "### What this report judges, and what it does not", "",
+              "**Judged** — defects that cannot be intentional (flattened-waveform "
+              "clipping, mid-track silence, L/R phase inversion, DC offset, hard cuts, "
+              "spectral seams), plus objective properties that correlate with usable "
+              "tracks (hook immediacy, motif repetition, pulse clarity, spectral balance, "
+              "dynamics, stereo width, loudness consistency).", "",
+              "**Deliberately not asserted** — a weakening beat is indistinguishable from "
+              "an intentional breakdown, so it is reported as a spot-check point and does "
+              "not affect the grade.", "",
+              "**Not judged** — whether a track is any good: subjective appeal, emotional "
+              "fit, how well it suits the episode's subject. None of that is measurable. "
+              "This ranking is a **shortlist for listening**, not a verdict.", ""]
+
+    path = os.path.join(out_dir, "REPORT.md")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    return path
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--urls", help="JSON produced by collect.js")
+    ap.add_argument("--dir", help="folder of audio files already downloaded")
+    ap.add_argument("--out", required=True, help="output folder")
+    ap.add_argument("--episode", default="Untitled Episode")
+    ap.add_argument("--limit", type=int, default=0,
+                    help="cap the final playlist length (0 = no cap)")
+    ap.add_argument("--narrative", help='narrative order JSON {"Track Title": 0.0-1.0}, '
+                                        "0 = opens the episode, 1 = closes it")
+    ap.add_argument("--export", action="store_true",
+                    help="also write level-matched numbered files, M3U, and timestamps")
+    ap.add_argument("--export-format", choices=["m4a", "wav", "flac"], default="m4a")
+    ap.add_argument("--require-instrumental", action="store_true",
+                    help='warn when a track\'s tags omit "instrumental"')
+    args = ap.parse_args()
+
+    narrative = None
+    if args.narrative:
+        with open(args.narrative, encoding="utf-8") as f:
+            narrative = json.load(f)
+
+    os.makedirs(args.out, exist_ok=True)
+    audio_dir = args.dir or os.path.join(args.out, "audio")
+
+    if args.urls:
+        print("[1/5] download")
+        jobs = download(args.urls, audio_dir)
+    elif args.dir:
+        jobs = collect_from_dir(args.dir)
+        print(f"[1/5] {len(jobs)} existing files")
+    else:
+        ap.error("one of --urls or --dir is required")
+
+    print(f"[2/5] analyze ({len(jobs)})")
+    results = []
+    for i, j in enumerate(jobs, 1):
+        try:
+            r = analyze_file(j["path"], target_bpm=j.get("target_bpm"))
+            r["title"] = j.get("title")
+            r["tags"] = j.get("tags")
+            # Instrumental-channel check: generators sometimes ignore "no vocals", so
+            # warn when the returned tag string does not say instrumental.
+            if args.require_instrumental and r["tags"] and \
+                    "instrumental" not in str(r["tags"]).lower():
+                r["defects"].append({"type": "possible_vocals", "severity": "warn",
+                                     "detail": f"tags omit 'instrumental': {r['tags'][:80]}"})
+                if r["tier"] == "GREEN":
+                    r["tier"] = "YELLOW"
+            results.append(r)
+            print(f"  {i}/{len(jobs)} {r['file']} -> {r['tier']}")
+        except Exception as e:  # noqa: BLE001
+            print(f"  {i}/{len(jobs)} {os.path.basename(j['path'])} -> failed: {e}")
+
+    print("[3/5] cohort scoring")
+    score_cohort(results)
+
+    print("[4/5] take selection")
+    kept, dropped = pick_best_takes(results)
+
+    print("[5/5] sequencing")
+    playlist = build_playlist(kept, closer_hint=CLOSER_HINTS, narrative=narrative)
+    if args.limit and len(playlist) > args.limit:
+        keep_ids = {id(t) for t in sorted(playlist, key=lambda t: -t["score"])[:args.limit]}
+        playlist = [t for t in playlist if id(t) in keep_ids]
+        playlist = build_playlist(playlist, closer_hint=CLOSER_HINTS, narrative=narrative)
+
+    export_rows = None
+    export_rows_target = None
+    if args.export:
+        print("[6/6] loudness normalization and export")
+        export_rows, pl_dir, common_lufs = export_playlist(
+            playlist, args.out, fmt=args.export_format)
+        export_rows_target = common_lufs
+        failed = [r for r in export_rows if not r["ok"]]
+        print(f"  {len(export_rows) - len(failed)}/{len(export_rows)} tracks "
+              f"-> {common_lufs} LUFS, {pl_dir}")
+        if failed:
+            print(f"  failed: {[r['file'] for r in failed]}")
+
+    with open(os.path.join(args.out, "analysis.json"), "w", encoding="utf-8") as f:
+        json.dump({"episode": args.episode, "results": results,
+                   "playlist": [t.get("title") or t["file"] for t in playlist]},
+                  f, ensure_ascii=False, indent=2)
+
+    path = write_report(args.out, args.episode, playlist, kept, dropped, results,
+                        export_rows, export_rows_target)
+    print(f"\ndone -> {path}")
+
+
+if __name__ == "__main__":
+    main()
