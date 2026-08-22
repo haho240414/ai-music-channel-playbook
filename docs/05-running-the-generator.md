@@ -4,7 +4,9 @@ The prompts are only half of it. Submitting twelve to twenty prompts through a w
 generator has its own failure modes, and losing track of what came back costs more time
 than writing the prompts did.
 
-This is the operating loop, written for an agent or a person driving a browser.
+This is the operating loop, written for an agent or a person driving a browser. For the
+actual automation technique — how to locate elements, verify cheaply, and recover from a
+stale reference — see [browser automation](06-browser-automation.md).
 
 ## One prompt per message, and wait
 
