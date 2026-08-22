@@ -14,6 +14,7 @@ at a time and hitting the failure modes that only show up at that volume.
 | [Thumbnail prompting](docs/02-thumbnail-prompting.md) | Keeping one character consistent across dozens of covers; why title text must be a separate layer |
 | [Quality screening](docs/03-quality-screening.md) | Detecting broken tracks automatically — and being honest about what a machine cannot judge |
 | [Playlist sequencing](docs/04-playlist-sequencing.md) | Picking track 1, ordering the rest, and why loudness normalization goes *down* |
+| [Running the generator](docs/05-running-the-generator.md) | The submission loop — session rotation, confirming a send actually registered, recording renames |
 
 Blank templates are in [`templates/`](templates/), and [`examples/`](examples/) has all of
 them filled in for one complete episode. A working implementation of the screening and
@@ -40,6 +41,22 @@ scaffolding.
 The templates are designed to be filled by a language model with the docs in context.
 That is the intended workflow, and it is why the docs state their reasoning rather than
 just their conclusions.
+
+**Open this repo in a coding agent and it briefs itself.** [`AGENTS.md`](AGENTS.md) — read
+by Codex and most agent tools — and [`CLAUDE.md`](CLAUDE.md) tell the agent what the repo
+is, which docs to load for which task, and the rules it must not quietly drop. It greets
+you with a menu instead of waiting to be explained to.
+
+In Claude Code there are also slash commands:
+
+| Command | Does |
+|---|---|
+| `/new-episode` | Brief, season, sound ratio, tracklist with keys and BPM |
+| `/song-prompts` | Expand a brief into complete per-track prompts |
+| `/cover-prompts` | Character bible, cover plate, clean plate, loop |
+| `/screen-tracks` | Run the screening tool and interpret the report |
+
+Doing it by hand instead:
 
 1. Give the model [`docs/01-song-prompting.md`](docs/01-song-prompting.md),
    [`docs/02-thumbnail-prompting.md`](docs/02-thumbnail-prompting.md), and the
