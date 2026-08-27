@@ -56,6 +56,7 @@ def download(urls_json: str, audio_dir: str) -> list[dict]:
     def fetch(job):
         path = job["path"]
         if os.path.exists(path) and os.path.getsize(path) > 10000:
+            job["ok"] = True
             return job
         # Write to a temporary name and rename on success. A process killed mid-download
         # otherwise leaves a partial file that sails past any size check -- measured, a
@@ -67,15 +68,35 @@ def download(urls_json: str, audio_dir: str) -> list[dict]:
             with urllib.request.urlopen(req, timeout=90) as r, open(tmp, "wb") as out:
                 shutil.copyfileobj(r, out)
             os.replace(tmp, path)
+            job["ok"] = True
+        except Exception as exc:  # noqa: BLE001
+            # One dead link must not destroy the run. Generator URLs expire, and a
+            # single 404 used to abort everything -- including the 6 of 7 files that
+            # had already downloaded -- with a bare traceback and no report.
+            job["ok"] = False
+            job["error"] = f"{type(exc).__name__}: {exc}"
         finally:
             if os.path.exists(tmp):
                 os.remove(tmp)
         return job
 
     with ThreadPoolExecutor(max_workers=4) as ex:
-        list(ex.map(fetch, jobs))
-    print(f"  downloaded {len(jobs)} files -> {audio_dir}")
-    return jobs
+        done = list(ex.map(fetch, jobs))
+
+    ok = [j for j in done if j.get("ok")]
+    failed = [j for j in done if not j.get("ok")]
+    print(f"  downloaded {len(ok)}/{len(done)} files -> {audio_dir}")
+    if failed:
+        print(f"  ! {len(failed)} download(s) failed; continuing without them:")
+        for j in failed[:8]:
+            print(f"      {os.path.basename(j['path'])}: {j.get('error')}")
+        if len(failed) > 8:
+            print(f"      ... and {len(failed) - 8} more")
+    if not done:
+        raise SystemExit("the input lists no audio URLs -- check the collect.js output")
+    if not ok:
+        raise SystemExit("every download failed -- check the URLs in the input")
+    return ok, failed
 
 
 def filename_to_title(name: str) -> str:
@@ -103,11 +124,21 @@ TIER_ICON = {"GREEN": "🟢", "YELLOW": "🟡", "RED": "🔴"}
 
 
 def write_report(out_dir, episode, playlist, kept, dropped, all_results,
-                 export_rows=None, common_lufs=None, unverified=None):
+                 export_rows=None, common_lufs=None, unverified=None,
+                 download_failures=None):
     lines = [f"# {episode} — screening and sequencing report", ""]
     lines += [f"- Files analyzed: **{len(all_results)}**",
               f"- After take selection: **{len(kept)}**",
               f"- Final playlist: **{len(playlist)}**", ""]
+
+    if download_failures:
+        lines += [f"> ⚠️ **{len(download_failures)} file(s) could not be downloaded** and "
+                  f"are missing from this episode:", ""]
+        for j in download_failures[:8]:
+            lines.append(f"> - `{os.path.basename(j['path'])}` — {j.get('error')}")
+        if len(download_failures) > 8:
+            lines.append(f"> - … and {len(download_failures) - 8} more")
+        lines.append("")
 
     if unverified:
         lines += [f"> ⚠️ **Instrumental check did not run.** No tag string was captured "
@@ -259,9 +290,10 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     audio_dir = args.dir or os.path.join(args.out, "audio")
 
+    download_failures = []
     if args.urls:
         print("[1/5] download")
-        jobs = download(args.urls, audio_dir)
+        jobs, download_failures = download(args.urls, audio_dir)
     elif args.dir:
         jobs = collect_from_dir(args.dir)
         print(f"[1/5] {len(jobs)} existing files")
@@ -345,7 +377,8 @@ def main():
                   f, ensure_ascii=False, indent=2)
 
     path = write_report(args.out, args.episode, playlist, kept, dropped, results,
-                        export_rows, export_rows_target, unverified)
+                        export_rows, export_rows_target, unverified,
+                        download_failures)
     print(f"\ndone -> {path}")
 
 

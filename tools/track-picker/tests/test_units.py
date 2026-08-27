@@ -331,25 +331,80 @@ def test_download_is_atomic(tmp_path, monkeypatch):
         return Ctx()
 
     monkeypatch.setattr(run.urllib.request, "urlopen", exploding_urlopen)
-    try:
+    with pytest.raises(SystemExit):        # every download failed
         run.download(str(urls), str(audio))
-    except Exception:
-        pass
 
     leftovers = list(audio.glob("*")) if audio.exists() else []
     assert not any(p.suffix == ".m4a" for p in leftovers), leftovers
     assert not any(p.name.endswith(".part") for p in leftovers), leftovers
 
 
-def test_downloaded_jobs_are_marked(tmp_path):
-    """run.py only deletes files it fetched itself; a --dir file must never be removed."""
+def test_one_dead_url_does_not_abort_the_batch(tmp_path, monkeypatch):
+    """A single expired link used to abort the whole run with a bare traceback --
+    discarding the 6 of 7 files that had already downloaded, and producing no report."""
+    import io
     import json as _json
     import run
 
     urls = tmp_path / "u.json"
-    urls.write_text(_json.dumps([{"title": "T", "urls": []}]))
-    from_urls = run.download(str(urls), str(tmp_path / "a"))
-    assert all(j.get("downloaded") for j in from_urls)
+    urls.write_text(_json.dumps([
+        {"title": "Good One", "urls": ["http://x/good1.m4a"]},
+        {"title": "Dead One", "urls": ["http://x/dead.m4a"]},
+        {"title": "Good Two", "urls": ["http://x/good2.m4a"]},
+    ]))
+
+    def fake_urlopen(req, timeout=None):
+        if "dead" in req.full_url:
+            raise OSError("HTTP Error 404: Not Found")
+        payload = b"x" * 20000
+
+        class Ctx:
+            def __enter__(self): return io.BytesIO(payload)
+            def __exit__(self, *e): return False
+        return Ctx()
+
+    monkeypatch.setattr(run.urllib.request, "urlopen", fake_urlopen)
+    ok, failed = run.download(str(urls), str(tmp_path / "audio"))
+
+    assert len(ok) == 2, [os.path.basename(j["path"]) for j in ok]
+    assert len(failed) == 1
+    assert "404" in failed[0]["error"]
+    assert all(j.get("ok") for j in ok)
+
+
+def test_all_downloads_failing_is_a_clean_error(tmp_path, monkeypatch):
+    import json as _json
+    import run
+
+    urls = tmp_path / "u.json"
+    urls.write_text(_json.dumps([{"title": "T", "urls": ["http://x/a.m4a"]}]))
+
+    def always_fail(req, timeout=None):
+        raise OSError("HTTP Error 500")
+
+    monkeypatch.setattr(run.urllib.request, "urlopen", always_fail)
+    with pytest.raises(SystemExit):
+        run.download(str(urls), str(tmp_path / "audio"))
+
+
+def test_downloaded_jobs_are_marked(tmp_path, monkeypatch):
+    """run.py only deletes files it fetched itself; a --dir file must never be removed."""
+    import json as _json
+    import run
+
+    import io
+    urls = tmp_path / "u.json"
+    urls.write_text(_json.dumps([{"title": "T", "urls": ["http://x/a.m4a"]}]))
+
+    def ok_urlopen(req, timeout=None):
+        class Ctx:
+            def __enter__(self): return io.BytesIO(b"x" * 20000)
+            def __exit__(self, *e): return False
+        return Ctx()
+
+    monkeypatch.setattr(run.urllib.request, "urlopen", ok_urlopen)
+    from_urls, _ = run.download(str(urls), str(tmp_path / "a"))
+    assert from_urls and all(j.get("downloaded") for j in from_urls)
 
     (tmp_path / "d").mkdir()
     (tmp_path / "d" / "01_Song.wav").write_bytes(b"")

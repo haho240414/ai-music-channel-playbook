@@ -247,6 +247,13 @@ Two things that break a naive version of this:
 - **Labels change under you.** A play button's label becomes "Pause" while playing. Capture
   every track's title when you enumerate the buttons, not inside the loop.
 
+**One dead link must not lose the batch.** Generator URLs expire, and mapping a fetch
+function over a thread pool propagates the first exception out of the whole run —
+measured, a single 404 aborted everything with a bare traceback, discarding the 6 of 7
+files that had already downloaded and producing no report at all. Collect per-file
+failures, name them, carry on with what arrived, and record the gap in the report so
+nobody wonders why the episode is short. Abort only when nothing downloaded.
+
 **Cache partial downloads safely.** Write to a temporary name and rename on success. A
 process killed mid-download otherwise leaves a partial file that passes any plausible size
 check — a 20%-truncated 3 MB track is still 611 KB — and is then treated as a valid cache
