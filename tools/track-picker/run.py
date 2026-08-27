@@ -23,7 +23,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from analyze import analyze_file          # noqa: E402
 from export import export_playlist, timestamp_lines  # noqa: E402
-from score import WEIGHTS, discrimination, pick_best_takes, score_cohort  # noqa: E402
+from score import (WEIGHTS, discrimination, normalize_title,  # noqa: E402
+                   pick_best_takes, score_cohort)
 from sequence import build_playlist       # noqa: E402
 
 AUDIO_EXT = (".m4a", ".mp3", ".wav", ".aac", ".flac", ".ogg")
@@ -64,16 +65,24 @@ def download(urls_json: str, audio_dir: str) -> list[dict]:
     return jobs
 
 
+def filename_to_title(name: str) -> str:
+    """Recover a track title from a filename.
+
+    Strips a leading index and EXPLICIT take markers only, reusing the same tested
+    helper applied to generator-supplied titles. A bare trailing letter or digit is
+    deliberately left alone: treating it as a take marker collapsed "Movement 1/2/3"
+    into a single track and silently dropped two of them from the episode.
+    """
+    title = re.sub(r"^\d+[_-]", "", os.path.splitext(name)[0])
+    return normalize_title(title.replace("_", " ").strip())
+
+
 def collect_from_dir(audio_dir: str) -> list[dict]:
     jobs = []
     for name in sorted(os.listdir(audio_dir)):
         if name.lower().endswith(AUDIO_EXT):
-            title = re.sub(r"^\d+_", "", os.path.splitext(name)[0])
-            # Strip take markers (_take2, _a, _b, -2) so takes of one track group together.
-            title = re.sub(r"(_take\d+|_v\d+|[_-][a-d]|[_-]\d)$", "", title, flags=re.I)
-            title = title.replace("_", " ").strip()
             jobs.append({"path": os.path.join(audio_dir, name),
-                         "title": title, "target_bpm": None})
+                         "title": filename_to_title(name), "target_bpm": None})
     return jobs
 
 

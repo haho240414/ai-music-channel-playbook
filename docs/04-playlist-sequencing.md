@@ -10,9 +10,15 @@ dropped and why — you will want to revisit it when a track feels weak later.
 
 Two cautions, both observed in real output:
 
-**Strip take markers before grouping.** They appear in filenames (`_take2`, `_a`, `_b`,
-`-2`) *and* in titles the generator returns (`Sidestreet Weather (Take 2)`). Without
-normalizing both, two takes of one track become two tracks and both end up in the episode.
+**Strip take markers before grouping — but only explicit ones.** They appear in filenames
+(`_take2`, `_v2`) *and* in titles the generator returns (`Sidestreet Weather (Take 2)`).
+Without normalizing both, two takes of one track become two tracks and both end up in the
+episode.
+
+Do **not** treat a bare trailing letter or digit as a take marker. It is ambiguous, and
+guessing wrong loses tracks silently: stripping `_1`/`_2`/`_3` collapsed `Movement 1`,
+`Movement 2` and `Movement 3` into a single track and discarded two of them as losing
+takes. Under-stripping is visible in the report and easy to fix; over-stripping is not.
 
 **Normalize the displayed title as well.** The winning take is frequently the one labelled
 `(Take 2)`; if only the grouping key is normalized, that suffix reaches the tracklist,

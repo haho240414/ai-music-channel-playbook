@@ -265,6 +265,46 @@ def test_score_cohort_single_track_scores():
     assert 0 <= tracks[0]["score"] <= 100
 
 
+# ---------------------------------------------------------------- filename titles
+
+
+@pytest.mark.parametrize("filename, expected", [
+    # Explicit take markers -- strip these.
+    ("01_Kettle_On_take1", "Kettle On"),
+    ("01_Kettle_On_take2", "Kettle On"),
+    ("03_Song_v2", "Song"),
+    ("04_Song_Version_2", "Song"),
+    # Ambiguous trailing letters and digits -- these are part of the title.
+    # Stripping them collapsed "Movement 1/2/3" into one track and silently dropped
+    # two of them from the episode.
+    ("01_Movement_1", "Movement 1"),
+    ("02_Movement_2", "Movement 2"),
+    ("03_Movement_3", "Movement 3"),
+    ("06_Track_A", "Track A"),
+    ("07_Part_C", "Part C"),
+    ("04_Interlude_II", "Interlude II"),
+    ("05_Studio_54", "Studio 54"),
+    ("08_Route_66", "Route 66"),
+])
+def test_filename_to_title(filename, expected):
+    import run
+    assert run.filename_to_title(filename) == expected
+
+
+def test_numbered_movements_stay_separate_tracks(tmp_path):
+    """End-to-end guard on the data-loss case: three movements must not become one
+    track with two takes discarded."""
+    import run
+    for n in (1, 2, 3):
+        (tmp_path / f"0{n}_Movement_{n}.wav").write_bytes(b"")
+    titles = [j["title"] for j in run.collect_from_dir(str(tmp_path))]
+    assert titles == ["Movement 1", "Movement 2", "Movement 3"]
+
+    tracks = [make_track(t) for t in titles]
+    kept, dropped = pick_best_takes(tracks)
+    assert len(kept) == 3 and dropped == []
+
+
 # ---------------------------------------------------------------- weights
 
 
