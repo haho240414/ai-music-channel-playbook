@@ -19,6 +19,11 @@ W_BRIGHT = 0.10
 W_ARC = 0.60   # deviation from the target energy arc
 W_NARR = 1.40  # narrative position hint, when supplied
 
+# Exponents >1 make a single jarring transition cost more than the sum of the small
+# improvements it could buy elsewhere. See _pair_cost.
+BPM_EXP = 1.7
+KEY_EXP = 1.5
+
 
 def camelot_distance(a: str | None, b: str | None) -> float:
     """Camelot wheel distance. 0 = same key, 1 = adjacent or relative major/minor."""
@@ -75,6 +80,120 @@ def _narr(t: dict, narrative: dict | None):
     return None
 
 
+# ---------------------------------------------------------------- cost model
+
+# The cost model works on normalized energy/brightness, which only mean anything
+# relative to the rest of the batch. `_prepare` attaches them; `_cleanup` removes them
+# so they never reach the exported JSON.
+_TEMP_KEYS = ("_e", "_b", "_bpm")
+
+
+def _prepare(pool: list[dict]) -> list[dict]:
+    energies = [_energy(t) for t in pool]
+    brights = [_brightness(t) for t in pool]
+    en, bn = _norm(energies), _norm(brights)
+    for t, e, b in zip(pool, energies, brights):
+        t["_e"] = (e - en["lo"]) / en["span"]
+        t["_b"] = (b - bn["lo"]) / bn["span"]
+        t["_bpm"] = t["tempo"]["bpm"] or 96.0
+    return pool
+
+
+def _cleanup(pool: list[dict]) -> None:
+    for t in pool:
+        for k in _TEMP_KEYS:
+            t.pop(k, None)
+
+
+def _pair_cost(prev: dict, cand: dict) -> float:
+    """Cost of playing `cand` directly after `prev`. Symmetric in its inputs.
+
+    The tempo and key terms are deliberately **superlinear**. With a linear cost the
+    optimizer trades one jarring transition for several tiny improvements elsewhere,
+    which is a bad deal perceptually: a listener notices a 27 BPM lurch and does not
+    notice five 5 BPM steps. Raising the exponent makes outlier transitions expensive
+    enough that they get avoided rather than amortized.
+    """
+    d_bpm = abs(cand["_bpm"] - prev["_bpm"]) / 10.0
+    # Do not trust the key term between tracks whose key estimate is uncertain.
+    # Measured margins ranged from 0.29 down to 0.03.
+    key_conf = min(prev["key"].get("confidence", 1.0), cand["key"].get("confidence", 1.0))
+    d_key = camelot_distance(prev["key"]["camelot"], cand["key"]["camelot"])
+    return (
+        W_BPM * (d_bpm ** BPM_EXP)
+        + W_KEY * (d_key ** KEY_EXP) * key_conf
+        + W_ENERGY * abs(cand["_e"] - prev["_e"]) * 3.0
+        + W_BRIGHT * abs(cand["_b"] - prev["_b"]) * 3.0
+    )
+
+
+def _slot_cost(cand: dict, pos: int, n_total: int, narrative: dict | None) -> float:
+    """Cost of `cand` sitting at position `pos`, independent of its neighbours."""
+    cost = (W_ARC * abs(cand["_e"] - _target_arc(pos, n_total)) * 3.0
+            - cand["score"] / 100.0)  # weak pull bringing better tracks earlier
+    nv = _narr(cand, narrative)
+    if nv is not None:
+        cost += W_NARR * abs(nv - pos / max(1, n_total - 1)) * 3.0
+    return cost
+
+
+def _total_cost(order: list[dict], narrative: dict | None) -> float:
+    n = len(order)
+    total = 0.0
+    for i, t in enumerate(order):
+        if i:
+            total += _pair_cost(order[i - 1], t)
+        total += _slot_cost(t, i, n, narrative)
+    return total
+
+
+def _local_improve(order: list[dict], narrative: dict | None,
+                   max_rounds: int = 40) -> list[dict]:
+    """Polish the greedy result with 2-opt and relocation moves.
+
+    Greedy nearest-neighbour commits early and spends the good transitions at the front,
+    so the tail of a real episode ends up with the jumps nobody wanted. Measured on a
+    14-track episode, the greedy tail carried BPM jumps of 15, 15 and 16 and a key
+    distance of 4 on the final transition.
+
+    Position 1 and the last position stay fixed -- both were chosen deliberately and are
+    not the sequencer's to overrule.
+    """
+    n = len(order)
+    if n < 5:
+        return order
+
+    best_cost = _total_cost(order, narrative)
+    for _ in range(max_rounds):
+        improved = False
+
+        # 2-opt: reverse an interior segment.
+        for i in range(1, n - 2):
+            for j in range(i + 1, n - 1):
+                cand = order[:i] + order[i:j + 1][::-1] + order[j + 1:]
+                c = _total_cost(cand, narrative)
+                if c < best_cost - 1e-9:
+                    order, best_cost, improved = cand, c, True
+
+        # Relocation: lift one interior track and reinsert it elsewhere.
+        for i in range(1, n - 1):
+            rest = order[:i] + order[i + 1:]
+            for j in range(1, n - 1):
+                if j == i:
+                    continue
+                cand = rest[:j] + [order[i]] + rest[j:]
+                c = _total_cost(cand, narrative)
+                if c < best_cost - 1e-9:
+                    order, best_cost, improved = cand, c, True
+                    break
+            if improved:
+                break
+
+        if not improved:
+            break
+    return order
+
+
 def build_playlist(tracks: list[dict], closer_hint: list[str] | None = None,
                    hook_max: float = 22.0, narrative: dict | None = None) -> list[dict]:
     """Order the episode using score, key, tempo, and energy.
@@ -90,15 +209,8 @@ def build_playlist(tracks: list[dict], closer_hint: list[str] | None = None,
             t["position"] = i
         return pool
 
-    energies = [_energy(t) for t in pool]
-    brights = [_brightness(t) for t in pool]
+    _prepare(pool)
     bpms = [(t["tempo"]["bpm"] or 96.0) for t in pool]
-    en, bn = _norm(energies), _norm(brights)
-
-    for t, e, b in zip(pool, energies, brights):
-        t["_e"] = (e - en["lo"]) / en["span"]
-        t["_b"] = (b - bn["lo"]) / bn["span"]
-        t["_bpm"] = t["tempo"]["bpm"] or 96.0
 
     # --- Choose the CLOSER first.
     #     Picking the opener first means a track that is obviously the episode's ending
@@ -150,24 +262,9 @@ def build_playlist(tracks: list[dict], closer_hint: list[str] | None = None,
     while rest:
         prev = order[-1]
         pos = len(order)
-        target = _target_arc(pos, n_total)
-        slot = pos / max(1, n_total - 1)
         best, best_cost = None, float("inf")
         for cand in rest:
-            cost = (
-                W_BPM * abs(cand["_bpm"] - prev["_bpm"]) / 10.0
-                # Do not trust the key term between tracks whose key estimate is
-                # uncertain. Measured margins ranged from 0.29 down to 0.03.
-                + W_KEY * camelot_distance(prev["key"]["camelot"], cand["key"]["camelot"])
-                * min(prev["key"].get("confidence", 1.0), cand["key"].get("confidence", 1.0))
-                + W_ENERGY * abs(cand["_e"] - prev["_e"]) * 3.0
-                + W_BRIGHT * abs(cand["_b"] - prev["_b"]) * 3.0
-                + W_ARC * abs(cand["_e"] - target) * 3.0
-                - cand["score"] / 100.0  # weak pull bringing better tracks earlier
-            )
-            nv = _narr(cand, narrative)
-            if nv is not None:
-                cost += W_NARR * abs(nv - slot) * 3.0
+            cost = _pair_cost(prev, cand) + _slot_cost(cand, pos, n_total, narrative)
             if cost < best_cost:
                 best, best_cost = cand, cost
         order.append(best)
@@ -175,6 +272,9 @@ def build_playlist(tracks: list[dict], closer_hint: list[str] | None = None,
 
     if closer is not None:
         order.append(closer)
+
+    # Greedy spends its good transitions early; polish the interior.
+    order = _local_improve(order, narrative)
 
     for i, t in enumerate(order, 1):
         t["position"] = i
@@ -185,7 +285,5 @@ def build_playlist(tracks: list[dict], closer_hint: list[str] | None = None,
                 "key_dist": round(camelot_distance(p["key"]["camelot"], t["key"]["camelot"]), 1),
                 "d_energy_lu": round(_energy(t) - _energy(p), 1),
             }
-    for t in order:
-        for k in ("_e", "_b", "_bpm"):
-            t.pop(k, None)
+    _cleanup(order)
     return order

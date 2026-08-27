@@ -1,0 +1,38 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # The audio tests synthesize their own fixtures rather than committing binaries,
+      # so ffmpeg has to be present for them to run at all.
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip numpy pytest
+
+      - name: Show versions
+        run: |
+          python --version
+          ffmpeg -version | head -1
+
+      - name: Run tests
+        working-directory: tools/track-picker
+        run: python -m pytest tests/ -v

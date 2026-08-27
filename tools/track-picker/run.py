@@ -230,12 +230,24 @@ def main():
             r["tags"] = j.get("tags")
             # Instrumental-channel check: generators sometimes ignore "no vocals", so
             # warn when the returned tag string does not say instrumental.
-            if args.require_instrumental and r["tags"] and \
-                    "instrumental" not in str(r["tags"]).lower():
-                r["defects"].append({"type": "possible_vocals", "severity": "warn",
-                                     "detail": f"tags omit 'instrumental': {r['tags'][:80]}"})
-                if r["tier"] == "GREEN":
-                    r["tier"] = "YELLOW"
+            #
+            # A missing tag string is reported too. Tag scraping is page-format
+            # dependent and has failed silently in practice -- passing quietly would
+            # give false confidence that every track was verified.
+            if args.require_instrumental:
+                tags = str(r["tags"] or "").strip()
+                if not tags:
+                    r["defects"].append({
+                        "type": "unverified_instrumental", "severity": "warn",
+                        "detail": "no tag string captured, so vocals could not be ruled out"})
+                    if r["tier"] == "GREEN":
+                        r["tier"] = "YELLOW"
+                elif "instrumental" not in tags.lower():
+                    r["defects"].append({
+                        "type": "possible_vocals", "severity": "warn",
+                        "detail": f"tags omit 'instrumental': {tags[:80]}"})
+                    if r["tier"] == "GREEN":
+                        r["tier"] = "YELLOW"
             results.append(r)
             print(f"  {i}/{len(jobs)} {r['file']} -> {r['tier']}")
         except Exception as e:  # noqa: BLE001

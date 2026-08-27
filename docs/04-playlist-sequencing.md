@@ -87,6 +87,43 @@ position 100% ▂▁   0.25   resolves
 **The `− score/100` term** is a weak pull bringing better tracks earlier, without letting
 score override musical continuity.
 
+### Make the tempo and key penalties superlinear
+
+Not linear. With a linear cost the optimizer will happily accept one jarring transition
+in exchange for several tiny improvements elsewhere, because the arithmetic says that is
+a net win. Perceptually it is not: a listener notices a 27 BPM lurch between tracks and
+does not notice five 5 BPM steps.
+
+```
+bpm_term = W_BPM × (|ΔBPM| / 10) ** 1.7
+key_term = W_KEY × camelot_distance ** 1.5 × key_confidence
+```
+
+Exponents above 1 make outlier transitions expensive enough to avoid rather than
+amortize.
+
+### Polish the greedy result
+
+Greedy nearest-neighbour commits early and spends the good transitions at the front, so
+the tail of a real episode inherits whatever is left. On a 14-track episode the greedy
+tail carried BPM jumps of 15, 15 and 16 and a key distance of 4 on the final transition.
+
+Run a local improvement pass afterward — 2-opt segment reversals plus single-track
+relocations, accepting any move that lowers total cost. **Keep position 1 and the last
+position fixed**: both were chosen deliberately and are not the optimizer's to overrule.
+
+Measured on that same 14-track episode:
+
+| | Σ\|ΔBPM\| | max \|ΔBPM\| | jumps > 12 BPM | Σ key distance |
+|---|---|---|---|---|
+| Greedy, linear cost | 103 | 16.0 | 3 | 27 |
+| \+ local improvement | 100 | **26.7** | 3 | 23 |
+| \+ superlinear cost | **61** | **9.9** | **0** | **23** |
+
+Note the middle row: the improvement pass on its own made the worst transition *worse*.
+Both changes are needed — the search finds better arrangements, and the exponent tells it
+which arrangements are actually better.
+
 ## Semantic order
 
 Signal analysis cannot know that "Chairs Stacked, Lights Off" is an ending image. If the

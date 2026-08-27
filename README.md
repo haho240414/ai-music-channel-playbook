@@ -1,5 +1,7 @@
 # AI Music Channel Playbook
 
+[![tests](https://github.com/haho240414/ai-music-channel-playbook/actions/workflows/tests.yml/badge.svg)](https://github.com/haho240414/ai-music-channel-playbook/actions/workflows/tests.yml)
+
 A working method for producing instrumental playlist channels with AI music generators —
 prompt anatomy, cover-art prompting, automated defect screening, and playlist sequencing.
 

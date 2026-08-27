@@ -319,6 +319,43 @@ def test_scale_sequencer_actually_smooths_tempo():
     assert jumps(order) < jumps(tracks)
 
 
+def test_local_improvement_never_worsens_total_cost():
+    from sequence import _local_improve, _prepare, _total_cost
+    tracks = _episode(16)
+    score_cohort(tracks)
+    order = _prepare(build_playlist(tracks))   # re-attach the normalized values
+    before = _total_cost(order, None)
+    again = _local_improve(list(order), None)
+    assert _total_cost(again, None) <= before + 1e-9
+
+
+def test_local_improvement_keeps_endpoints_and_membership():
+    """The opener and closer were chosen deliberately; polishing must not move them."""
+    from sequence import _local_improve, _prepare
+    tracks = _episode(14)
+    score_cohort(tracks)
+    order = _prepare(build_playlist(tracks))
+    polished = _local_improve(list(order), None)
+    assert polished[0] is order[0]
+    assert polished[-1] is order[-1]
+    assert {id(t) for t in polished} == {id(t) for t in order}
+    assert len(polished) == len(order)
+
+
+def test_superlinear_cost_avoids_outlier_transitions():
+    """A linear cost trades one jarring jump for several tiny gains. Measured on a real
+    14-track episode that produced a 26.7 BPM lurch; the exponent removed it."""
+    tracks = _episode(18)
+    score_cohort(tracks)
+    order = build_playlist(tracks)
+    jumps = [abs(order[i + 1]["tempo"]["bpm"] - order[i]["tempo"]["bpm"])
+             for i in range(len(order) - 1)]
+    raw = [t["tempo"]["bpm"] for t in tracks]
+    worst_possible = max(raw) - min(raw)
+    # No single transition may eat a large share of the episode's whole tempo span.
+    assert max(jumps) < worst_possible * 0.65, sorted(jumps)[-3:]
+
+
 def test_scale_with_narrative_respects_endpoints():
     tracks = _episode(15)
     score_cohort(tracks)
