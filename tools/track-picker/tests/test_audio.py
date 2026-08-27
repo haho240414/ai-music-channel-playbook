@@ -179,6 +179,26 @@ def test_very_short_file_does_not_crash(audio_dir):
 # ---------------------------------------------------------------- pipeline
 
 
+def test_parallel_analysis_matches_serial(audio_dir):
+    """Analysis is run across a thread pool for a ~3x speedup. It must be the speed that
+    changes and nothing else."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    paths = [str(audio_dir / n) for n in
+             ("clean.wav", "hardcut.wav", "dropout.wav", "mono.wav", "clipped.wav")]
+    serial = [analyze_file(p) for p in paths]
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        parallel = list(ex.map(analyze_file, paths))
+
+    assert [r["file"] for r in parallel] == [r["file"] for r in serial], "order must hold"
+    for a, b in zip(serial, parallel):
+        assert a["tier"] == b["tier"]
+        assert a["tempo"]["bpm"] == b["tempo"]["bpm"]
+        assert a["key"]["camelot"] == b["key"]["camelot"]
+        assert a["loudness"] == b["loudness"]
+        assert types_of(a) == types_of(b)
+
+
 def test_full_pipeline_end_to_end(audio_dir, tmp_path):
     names = ["clean.wav", "hardcut.wav", "dropout.wav", "mono.wav"]
     results = []

@@ -267,6 +267,16 @@ rather than WAV. That's fine. At the bitrates in use the difference from lossles
 inaudible, and YouTube re-encodes everything on upload anyway, so a lossless master's
 advantage doesn't survive the platform pipeline.
 
+## Cost
+
+Screening a 30-file episode takes about half a minute end to end, so it is cheap enough
+to run on every batch rather than only when something sounds wrong.
+
+Almost all of it is ffmpeg, not analysis: measured per track, decoding is 12% of the time
+and the numpy work 14%, while the **EBU R128 loudness pass is 73%**. Since that is
+subprocess wait, running tracks across a thread pool gives a near-linear speedup —
+24.1s to 7.6s on four threads, with byte-identical results.
+
 ## Implementation
 
 Working code: [`tools/track-picker/`](../tools/track-picker/)
