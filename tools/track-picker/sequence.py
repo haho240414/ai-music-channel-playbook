@@ -195,12 +195,19 @@ def _local_improve(order: list[dict], narrative: dict | None,
 
 
 def build_playlist(tracks: list[dict], closer_hint: list[str] | None = None,
-                   hook_max: float = 22.0, narrative: dict | None = None) -> list[dict]:
+                   hook_max: float | None = None,
+                   narrative: dict | None = None) -> list[dict]:
     """Order the episode using score, key, tempo, and energy.
 
     Pass `narrative` (title -> 0.0-1.0) to supply semantic order. Signal analysis cannot
     know that a title like "Chairs Stacked, Lights Off" is an ending image.
     """
+    # Derived, not hardcoded: the hook weight has changed once already, and a stale
+    # constant here silently rescales the opener decision.
+    if hook_max is None:
+        from score import WEIGHTS
+        hook_max = float(WEIGHTS["hook"])
+
     pool = [t for t in tracks if t.get("tier") != "RED"] or list(tracks)
     if len(pool) <= 1:
         # Still assign position -- export and the report both index on it, so

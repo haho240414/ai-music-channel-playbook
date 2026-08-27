@@ -265,6 +265,55 @@ def test_score_cohort_single_track_scores():
     assert 0 <= tracks[0]["score"] <= 100
 
 
+# ---------------------------------------------------------------- weights
+
+
+def test_weights_sum_to_one_hundred():
+    from score import WEIGHTS
+    assert sum(WEIGHTS.values()) == 100
+
+
+def test_opener_hook_scale_tracks_the_weight():
+    """build_playlist normalizes the hook subscore by its maximum. That maximum has
+    already changed once; a stale constant silently rescales the opener decision."""
+    import inspect
+    import sequence
+    from score import WEIGHTS
+
+    src = inspect.getsource(sequence.build_playlist)
+    assert "hook_max = float(WEIGHTS" in src, "hook_max must be derived, not hardcoded"
+
+    # A full-marks hook must win the opener slot. Energies are spread so the closer is
+    # chosen unambiguously and does not accidentally consume the candidate.
+    t = make_track("perfect", hook=float(WEIGHTS["hook"]), ttf=1.0,
+                   score=50.0, lufs=-13.0)
+    others = [make_track(f"o{i}", hook=1.0, ttf=9.0, score=40.0, lufs=-15.0 - i)
+              for i in range(3)]
+    order = build_playlist([t] + others)
+    assert order[0]["title"] == "perfect"
+
+
+def test_discrimination_flags_a_constant_metric():
+    """A metric that scores every track identically contributes nothing to ranking."""
+    from score import discrimination
+    tracks = _episode(12)
+    score_cohort(tracks)
+    for t in tracks:                       # force one metric flat
+        t["subscores"]["stereo"] = 3.0
+    d = {x["metric"]: x for x in discrimination(tracks)}
+    assert d["stereo"]["verdict"] == "near-constant"
+    assert d["stereo"]["spread"] == 0.0
+    assert any(x["verdict"] == "good" for x in d.values())
+
+
+def test_discrimination_needs_two_tracks():
+    from score import discrimination
+    assert discrimination([]) == []
+    one = _episode(1)
+    score_cohort(one)
+    assert discrimination(one) == []
+
+
 # ---------------------------------------------------------------- scale
 
 

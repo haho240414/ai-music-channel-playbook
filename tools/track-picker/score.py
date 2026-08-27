@@ -9,15 +9,29 @@ from __future__ import annotations
 
 import numpy as np
 
+# Weights are calibrated against measured discrimination, not intuition. Over a real
+# 30-track batch, the spread each metric actually produced (range as a share of its own
+# maximum) was:
+#
+#   hook 93%   spectral 93%   motif 80%   pulse 80%   loudness 66%
+#   dynamics 38%   stereo 12%
+#
+# Stereo width was near-constant -- 29 of 30 tracks scored full marks -- so most of its
+# budget went to metrics that separate tracks. It is kept at a low weight as a guard: a
+# genuinely mono or absurdly wide track should still lose something.
+#
+# These are tuned to one generator's output. On different material, re-measure: the
+# report prints each metric's spread so you can see whether it is discriminating.
 WEIGHTS = {
-    "hook": 22,        # does it grab within the first 3-5 seconds
-    "motif": 18,       # does a memorable figure come back
-    "pulse": 12,       # is the rhythm clearly defined
-    "spectral": 13,    # is the tone balance an outlier within the batch
-    "dynamics": 13,    # over-compressed or excessively dynamic
-    "stereo": 8,       # is there any width
+    "hook": 24,        # does it grab within the first 3-5 seconds
+    "motif": 20,       # does a memorable figure come back
+    "pulse": 13,       # is the rhythm clearly defined
+    "spectral": 15,    # is the tone balance an outlier within the batch
+    "dynamics": 11,    # over-compressed or excessively dynamic
+    "stereo": 3,       # guard only: catches mono and out-of-phase width
     "loudness": 14,    # consistent with the batch, with peak headroom
 }
+assert sum(WEIGHTS.values()) == 100
 
 
 def _ramp(x, good, bad):
@@ -131,6 +145,33 @@ def normalize_title(title: str) -> str:
         prev = out
         out = _TAKE_SUFFIX.sub("", out).strip()
     return out or (title or "").strip()
+
+
+def discrimination(results: list[dict]) -> list[dict]:
+    """How much each metric actually separated this batch.
+
+    A metric whose scores are near-identical across every track contributes nothing to
+    the ranking, however sensible it looks. Reporting this lets someone running different
+    material see whether the weights still earn their place, instead of trusting numbers
+    tuned on someone else's generator.
+    """
+    scored = [r for r in results if r.get("subscores")]
+    if len(scored) < 2:
+        return []
+
+    out = []
+    for name, weight in WEIGHTS.items():
+        vals = [r["subscores"].get(name, 0.0) for r in scored]
+        spread = (max(vals) - min(vals)) / weight if weight else 0.0
+        out.append({
+            "metric": name,
+            "weight": weight,
+            "mean": round(sum(vals) / len(vals), 1),
+            "spread": round(spread, 3),
+            "verdict": ("near-constant" if spread < 0.25
+                        else "weak" if spread < 0.50 else "good"),
+        })
+    return sorted(out, key=lambda d: -d["spread"])
 
 
 def pick_best_takes(results: list[dict]) -> tuple[list[dict], list[dict]]:

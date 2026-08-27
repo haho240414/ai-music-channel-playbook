@@ -150,15 +150,15 @@ and "deliberate", it belongs in scoring or in a hint, never in a reject decision
 
 For ranking only. Seven metrics, weighted to 100:
 
-| Metric | Weight | What it measures |
-|---|---|---|
-| Hook immediacy | 22 | Time to reach full energy + onset density in the first 5s |
-| Motif repetition | 18 | Self-similarity strength at phrase-length lags (5–30s) |
-| Pulse clarity | 12 | Median beat-grid coherence |
-| Spectral balance | 13 | Distance from the batch's median spectral profile |
-| Dynamics | 13 | Crest factor and EBU R128 loudness range |
-| Stereo width | 8 | Mid/side energy ratio |
-| Loudness consistency | 14 | LUFS agreement with the batch, true-peak headroom |
+| Metric | Weight | What it measures | Spread measured |
+|---|---|---|---|
+| Hook immediacy | 24 | Time to reach full energy + onset density in the first 5s | 93% |
+| Motif repetition | 20 | Self-similarity strength at phrase-length lags (5–30s) | 80% |
+| Spectral balance | 15 | Distance from the batch's median spectral profile | 93% |
+| Loudness consistency | 14 | LUFS agreement with the batch, true-peak headroom | 66% |
+| Pulse clarity | 13 | Median beat-grid coherence | 80% |
+| Dynamics | 11 | Crest factor and EBU R128 loudness range | 38% |
+| Stereo width | 3 | Mid/side energy ratio — a guard, not a ranking axis | 12% |
 
 Two design choices worth copying:
 
@@ -171,6 +171,33 @@ track in a small batch scores zero, which exaggerates real differences. Map to 0
 
 Hook immediacy is weighted highest because it is the metric most directly tied to whether
 a playlist listener stays — and it is genuinely measurable, unlike "catchiness".
+
+### Weight by measured discrimination, not by intuition
+
+The "spread measured" column above is the range each metric actually produced across a
+real 30-track batch, as a share of its own maximum. It is the deciding number.
+
+**Stereo width scored full marks on 29 of 30 tracks.** One generator's output has
+consistent width, so those points were a constant added to every track — contributing
+nothing to the ranking while diluting the metrics that do separate tracks. Its budget
+moved to hook, motif and spectral balance; it stays at a low weight purely as a guard, so
+a genuinely mono or out-of-phase track still loses something.
+
+Reweighting widened the score spread (σ 14.7 → 15.7) and **changed zero take selections** —
+which is the outcome you want. If reweighting flips many decisions, the weights were
+arbitrary; if it sharpens the distribution while the choices hold, they were not.
+
+These weights are tuned to one generator. On different material they may not hold, so the
+report prints the discrimination table for every run:
+
+| Metric | Weight | Mean | Spread | |
+|---|---|---|---|---|
+| spectral | 15 | 10.5 | 93% | 🟢 good |
+| hook | 24 | 15.7 | 92% | 🟢 good |
+| … | | | | |
+| stereo | 3 | 3.0 | 13% | 🔴 near-constant |
+
+Anything marked near-constant on your batch is weight better spent elsewhere.
 
 ## Three grades
 

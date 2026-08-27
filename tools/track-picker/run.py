@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from analyze import analyze_file          # noqa: E402
 from export import export_playlist, timestamp_lines  # noqa: E402
-from score import pick_best_takes, score_cohort  # noqa: E402
+from score import WEIGHTS, discrimination, pick_best_takes, score_cohort  # noqa: E402
 from sequence import build_playlist       # noqa: E402
 
 AUDIO_EXT = (".m4a", ".mp3", ".wav", ".aac", ".flac", ".ogg")
@@ -111,10 +111,12 @@ def write_report(out_dir, episode, playlist, kept, dropped, all_results,
     if playlist:
         top = playlist[0]
         lines += ["", f"**Why this opens** — `{top.get('title', top['file'])}`: "
-                      f"score {top['score']:.0f}, hook {top['subscores']['hook']:.0f}/22 "
+                      f"score {top['score']:.0f}, "
+                      f"hook {top['subscores']['hook']:.0f}/{WEIGHTS['hook']} "
                       f"(full energy at {top['metrics']['time_to_full_s']}s, "
                       f"onset density {top['metrics']['onset_density_5s']}/s in the first 5s), "
-                      f"motif repetition {top['subscores']['motif']:.0f}/18.", ""]
+                      f"motif repetition {top['subscores']['motif']:.0f}/"
+                      f"{WEIGHTS['motif']}.", ""]
 
     lines += ["## Per-track detail", "",
               "| Track | Grade | Score | Hook | Motif | Pulse | Spectral | Dynamics | "
@@ -151,6 +153,23 @@ def write_report(out_dir, episode, playlist, kept, dropped, all_results,
             lines.append(f"| {r['position']} | `{r['file']}` | {r['lufs_before']} | "
                          f"{r['gain_db']:+.2f} dB |")
         lines += ["", "### Chapter timestamps", "", "```"] + stamps + ["```"]
+
+    disc = discrimination(all_results)
+    if disc:
+        weak = [d for d in disc if d["verdict"] != "good"]
+        lines += ["", "## Metric discrimination", "",
+                  "How much each scoring metric actually separated *this* batch. A "
+                  "near-constant metric adds a constant to every track and contributes "
+                  "nothing to the ranking — if one shows up here, its weight is better "
+                  "spent elsewhere on your material.", "",
+                  "| Metric | Weight | Mean | Spread | |", "|---|---|---|---|---|"]
+        for d in disc:
+            icon = {"good": "🟢", "weak": "🟡", "near-constant": "🔴"}[d["verdict"]]
+            lines.append(f"| {d['metric']} | {d['weight']} | {d['mean']} | "
+                         f"{d['spread']:.0%} | {icon} {d['verdict']} |")
+        if weak:
+            lines += ["", f"{len(weak)} metric(s) below the useful threshold on this "
+                          f"batch: {', '.join(d['metric'] for d in weak)}."]
 
     spots = [r for r in all_results if r.get("spot_check")]
     if spots:
