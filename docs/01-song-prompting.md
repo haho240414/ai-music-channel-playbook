@@ -124,6 +124,17 @@ In one 15-track episode, three came back renamed:
 from audio alone is miserable, and your tracklist, chapter markers, and filenames all
 depend on it.
 
+### Alternate takes may be labelled in the title itself
+
+Besides renaming tracks outright, a generator may return the second take as a separate
+entry titled `Sidestreet Weather (Take 2)`. Group takes by a **normalized** title with
+any trailing `(Take N)` / `(Version N)` / `- take N` stripped, or both takes survive
+selection and the same track appears twice in the episode.
+
+Strip it from the *displayed* title too, not just the grouping key — the winning take is
+often the one carrying the suffix, and it would otherwise reach the tracklist, the
+exported filenames, and the published chapter timestamps.
+
 ### Two takes per prompt, one often broken
 
 Most generators return two variations. They are not equivalent — in one batch, take 2 of a

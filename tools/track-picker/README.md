@@ -90,15 +90,42 @@ timestamps and do not affect the grade.
 | `run.py` | CLI and report generation |
 | `collect.js` | Browser snippet for recovering audio URLs |
 
+## Tests
+
+```bash
+pip install pytest numpy
+python3 -m pytest tests/ -q
+```
+
+`tests/test_units.py` needs no audio and covers the logic that was hardest to get right:
+metrical folding, the loudness plan, take grouping, and sequencing at 12/15/20-track
+scale. `tests/test_audio.py` synthesizes fixtures with ffmpeg — one per condition — and
+checks that each detector fires on its own fixture and, just as importantly, that a clean
+track comes back clean.
+
+Every test named after a failure corresponds to a bug that actually shipped.
+
 ## Adapting to another generator
 
-Only `collect.js` is service-specific. Adjust:
+Only `collect.js` is service-specific, and its service-specific parts are in one `CFG`
+block at the top. Override it without editing the file:
 
-- `CLIP_RE` — the URL pattern of the audio files
-- The `aria-label` matchers — how play buttons and the transport controls are labelled
-- `bpmForTitle` / `tagsForTitle` — where BPM and tags appear in that page's text
+```js
+window.__pickConfig = {
+  clipPattern: /audio\/[\w-]+\.mp3/,   // URL pattern of the audio files
+  playLabel: /^play track/i,           // how a track's play button is labelled
+  titleFrom: (l) => l.replace(/^play track:\s+/i, "").trim(),
+  transportLabel: /^(previous|next)/i, // controls that are not tracks
+  pauseLabel: /^pause/i,
+  waitMs: 2500,                        // longer if requests are slow to land
+};
+// ...then paste collect.js
+```
 
-Everything downstream operates on plain audio files.
+`bpmForTitle` and `tagsForTitle` read that page's own text and will need adjusting too if
+the generator formats prompts differently.
+
+Everything downstream operates on plain audio files and is service-agnostic.
 
 ## Limits
 

@@ -399,7 +399,14 @@ def detect_defects(L, R, mono, sr, env, a0, a1, mag, frame_rate, tempo, rhythm, 
 # ---------------------------------------------------------------- quality metrics
 
 
-def quality_metrics(L, R, mono, sr, env, a0, a1, mag, onset, frame_rate, rhythm=None):
+def quality_metrics(L, R, mono, sr, env, a0, a1, mag, onset, onset_rate,
+                    mag_rate, rhythm=None):
+    """Feature extraction.
+
+    Two different frame rates are in play and they are not interchangeable: `onset` is
+    computed at a fine hop for tempo work, while `mag` uses a coarser STFT hop. Applying
+    the onset rate to the magnitude array silently scans the wrong lag window.
+    """
     m = {}
 
     # Beat clarity as a *quality* metric rather than a defect: it cannot be separated
@@ -408,13 +415,19 @@ def quality_metrics(L, R, mono, sr, env, a0, a1, mag, onset, frame_rate, rhythm=
     m["pulse_clarity"] = (rhythm or {}).get("clarity_median") or 0.0
 
     # Hook immediacy: time to reach full energy.
+    #
+    # Guard against a silent or near-silent file: it trivially "reaches" 80% of its own
+    # (zero) median at t=0, which otherwise scores as a perfect instant hook.
     med = np.median(env[a0:a1]) if a1 > a0 else np.median(env)
-    idx = np.where(env >= med * 0.8)[0]
-    m["time_to_full_s"] = round(float(idx[0] * 0.1), 2) if idx.size else 99.0
+    if not np.isfinite(med) or med < 1e-4:  # ~-80 dBFS: no signal, metric undefined
+        m["time_to_full_s"] = 99.0
+    else:
+        idx = np.where(env >= med * 0.8)[0]
+        m["time_to_full_s"] = round(float(idx[0] * 0.1), 2) if idx.size else 99.0
 
     # Onset density in the first 5s: is there actually a rhythm or melody, or is this a
     # pad drone?
-    n5 = int(5.0 * frame_rate)
+    n5 = int(5.0 * onset_rate)
     if onset.size > n5 > 0:
         head, whole = onset[:n5], onset
         thr = np.median(whole) + np.std(whole) * 0.5
@@ -430,12 +443,17 @@ def quality_metrics(L, R, mono, sr, env, a0, a1, mag, onset, frame_rate, rhythm=
         feat = feat - feat.mean(axis=0, keepdims=True)
         nrm = np.linalg.norm(feat, axis=1, keepdims=True) + 1e-9
         feat = feat / nrm
-        lo_lag, hi_lag = int(5 * frame_rate), int(30 * frame_rate)
-        hi_lag = min(hi_lag, feat.shape[0] - 10)
+        # Lag bounds must use the MAGNITUDE frame rate, since feat comes from `mag`.
+        lo_lag = int(5 * mag_rate)
+        hi_lag = min(int(30 * mag_rate), feat.shape[0] - 10)
+        step = max(1, int(0.5 * mag_rate))
         best = 0.0
-        for lag in range(lo_lag, max(lo_lag + 1, hi_lag), max(1, int(0.5 * frame_rate))):
+        for lag in range(lo_lag, hi_lag, step):
+            if lag <= 0 or lag >= feat.shape[0]:
+                continue  # nothing to correlate against
             sim = float(np.mean(np.sum(feat[:-lag] * feat[lag:], axis=1)))
-            best = max(best, sim)
+            if np.isfinite(sim):
+                best = max(best, sim)
         m["motif_repetition"] = round(best, 3)
     else:
         m["motif_repetition"] = 0.0
@@ -490,7 +508,8 @@ def analyze_file(path: str, target_bpm=None) -> dict:
         "rhythm": rhythm,
         "key": estimate_key(mag, sr, n_fft),
         "loudness": loudness(path),
-        "metrics": quality_metrics(L, R, mono, sr, env, a0, a1, mag, onset, onset_fr,
+        "metrics": quality_metrics(L, R, mono, sr, env, a0, a1, mag, onset,
+                                   onset_rate=onset_fr, mag_rate=frame_rate,
                                    rhythm=rhythm),
     }
     res["defects"] = [

@@ -109,17 +109,48 @@ def score_cohort(results: list[dict]) -> list[dict]:
     return results
 
 
+import re
+
+# Generators label alternate takes in the title itself -- "Alleyway Weather (Take 2)",
+# "... (Version 2)", "... - take 3". Without stripping these, both takes are treated as
+# separate tracks and BOTH end up in the episode. Observed in real output.
+_TAKE_SUFFIX = re.compile(
+    r"\s*(?:[-–—]\s*)?[\(\[]?\s*(?:take|version|ver|v)\s*[.#]?\s*\d+\s*[\)\]]?\s*$",
+    re.IGNORECASE,
+)
+
+
+def normalize_title(title: str) -> str:
+    """Strip a trailing take/version marker so takes of one track group together.
+
+    A digit is required, so a real title like "Take Five" survives untouched.
+    """
+    prev = None
+    out = (title or "").strip()
+    while out != prev:  # handles "Song (Take 2) v3"
+        prev = out
+        out = _TAKE_SUFFIX.sub("", out).strip()
+    return out or (title or "").strip()
+
+
 def pick_best_takes(results: list[dict]) -> tuple[list[dict], list[dict]]:
     """Of several takes sharing a title, keep only the highest scoring one."""
     by_title: dict[str, list[dict]] = {}
     for r in results:
-        by_title.setdefault(r.get("title") or r["file"], []).append(r)
+        key = normalize_title(r.get("title") or r["file"])
+        by_title.setdefault(key, []).append(r)
 
     kept, dropped = [], []
     for title, takes in by_title.items():
         takes.sort(key=lambda t: (t.get("tier") == "RED", -t.get("score", 0)))
-        kept.append(takes[0])
+        winner = takes[0]
+        # Present the clean title. The winning take may be the one labelled
+        # "... (Take 2)", and that suffix would otherwise reach the tracklist,
+        # the exported filename, and the published chapter timestamps.
+        winner["raw_title"] = winner.get("title")
+        winner["title"] = title
+        kept.append(winner)
         for t in takes[1:]:
-            t["dropped_reason"] = f"lower-scoring take of the same title (kept: {takes[0]['file']})"
+            t["dropped_reason"] = f"lower-scoring take of the same title (kept: {winner['file']})"
             dropped.append(t)
     return kept, dropped

@@ -33,10 +33,16 @@ def plan_gains(playlist, target=TARGET_LUFS, ceiling=TP_CEILING):
     3.3 LU. The spread survives.
 
     Instead, compute the highest LUFS each track could reach without exceeding the
-    ceiling, and take the minimum across the episode. Every gain is then negative, so
-    clipping is impossible and every track lands at exactly the same loudness (measured:
-    0.10 LU spread). The absolute level ends up below the streaming reference, which does
-    not matter -- platforms normalize playback loudness anyway.
+    ceiling, and take the minimum across the episode as the common target.
+
+    The safety invariant is per-track, not a sign check: for every track,
+    gain_i = common - lufs_i <= achievable_i - lufs_i = ceiling - tp_i, so the resulting
+    true peak can never exceed the ceiling. Most gains come out negative; the track that
+    *sets* the minimum gets a small positive gain if it had peak headroom, which is both
+    intended and safe. Every track lands at the same loudness (measured: 0.10 LU spread).
+
+    The absolute level ends up below the streaming reference, which does not matter --
+    platforms normalize playback loudness anyway.
     """
     achievable = []
     for t in playlist:

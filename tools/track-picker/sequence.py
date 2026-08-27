@@ -84,6 +84,10 @@ def build_playlist(tracks: list[dict], closer_hint: list[str] | None = None,
     """
     pool = [t for t in tracks if t.get("tier") != "RED"] or list(tracks)
     if len(pool) <= 1:
+        # Still assign position -- export and the report both index on it, so
+        # returning a bare track here crashes a one-track episode.
+        for i, t in enumerate(pool, 1):
+            t["position"] = i
         return pool
 
     energies = [_energy(t) for t in pool]

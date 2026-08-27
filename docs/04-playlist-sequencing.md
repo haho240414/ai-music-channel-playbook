@@ -8,9 +8,15 @@ to play them in, and how to make them sit at the same volume.
 Group by title, keep the highest-scoring non-RED take, drop the rest. Record what was
 dropped and why — you will want to revisit it when a track feels weak later.
 
-One caution when inferring titles from filenames: strip take markers (`_take2`, `_a`, `_b`,
-`-2`) before grouping, or two takes of the same track become two different tracks and both
-end up in the episode.
+Two cautions, both observed in real output:
+
+**Strip take markers before grouping.** They appear in filenames (`_take2`, `_a`, `_b`,
+`-2`) *and* in titles the generator returns (`Sidestreet Weather (Take 2)`). Without
+normalizing both, two takes of one track become two tracks and both end up in the episode.
+
+**Normalize the displayed title as well.** The winning take is frequently the one labelled
+`(Take 2)`; if only the grouping key is normalized, that suffix reaches the tracklist,
+the exported filename, and the published chapter timestamps.
 
 ## Track 1
 
@@ -109,8 +115,16 @@ exceeding the true-peak ceiling:
 achievable_i = lufs_i + (ceiling_dBTP − true_peak_i)
 ```
 
-Take the minimum across the episode as the common target. Every gain is then negative, no
-clipping is possible, and every track lands at exactly the same loudness.
+Take the minimum across the episode as the common target. The safety guarantee is
+per-track rather than a sign check:
+
+```
+gain_i = common − lufs_i ≤ achievable_i − lufs_i = ceiling − true_peak_i
+```
+
+so no track's true peak can exceed the ceiling. Most gains come out negative; the track
+that *sets* the minimum gets a small positive gain if it had peak headroom, which is
+intended and provably safe. Every track lands at exactly the same loudness.
 
 Result on the same episode: **3.6 LU → 0.10 LU**, all true peaks safely under −1 dBTP.
 

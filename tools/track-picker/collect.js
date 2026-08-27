@@ -8,17 +8,44 @@
  * track does fetch its audio file. Clicking each play button and reading the Performance
  * Resource Timing entries recovers the URLs without a manual download per track.
  *
- * Written against a player whose track buttons carry aria-label="Play <title>" and whose
- * audio files match CLIP_RE. Adjust both for a different service.
+ * Adapting to another generator: edit the CFG block below, or override it without
+ * touching this file:
+ *
+ *     window.__pickConfig = {
+ *       clipPattern: /audio\/[\w-]+\.mp3/,
+ *       playLabel: /^play track/i,
+ *       titleFrom: (l) => l.replace(/^play track:\s+/i, "").trim(),
+ *     };
+ *     // ...then paste this script.
  *
  * If a long episode times out, run it in slices via window.__pickStart / __pickCount.
  */
 (async () => {
-  const START = window.__pickStart || 0;   // first button index
-  const COUNT = window.__pickCount || 999; // how many to process
-  const WAIT_MS = 2200;                    // wait for the network request to land
+  // ---------------------------------------------------------------- config
+  // Everything service-specific lives here. Adapting to another generator should
+  // only require editing this block. Override any of it before running by setting
+  // window.__pickConfig = { ... }.
+  const CFG = Object.assign({
+    // URL pattern of the audio files the player fetches.
+    clipPattern: /clips\/[\w-]+\.m4a/,
+    // How a track's play button is labelled, and how to get the title from it.
+    playLabel: /^Play /,
+    titleFrom: (label) => label.replace(/^Play\s+/, "").trim(),
+    // Transport controls that share the play-button label but are not tracks.
+    transportLabel: /^Play (previous|next)\b/i,
+    // How a playing track's button is labelled, used to stop playback.
+    pauseLabel: /^Pause /,
+    // Milliseconds to wait after a click for the audio request to land.
+    waitMs: 2200,
+    // Slice of the button list to process (for very long episodes).
+    start: 0,
+    count: 999,
+  }, window.__pickConfig || {});
 
-  const CLIP_RE = /clips\/[\w-]+\.m4a/;
+  const START = window.__pickStart ?? CFG.start;
+  const COUNT = window.__pickCount ?? CFG.count;
+  const WAIT_MS = CFG.waitMs;
+  const CLIP_RE = CFG.clipPattern;
 
   // Do NOT extract BPM by proximity. Searching around the title picks up the PREVIOUS
   // track's BPM and shifts every value by one position (this bug happened twice).
@@ -48,16 +75,12 @@
   // mistaken for tracks. Capture each title NOW: a button's label flips to "Pause ..."
   // while it plays, and reading it later inside the loop records "Pause <title>" as the
   // track name (this bug happened).
-  const TRANSPORT = /^Play (previous|next)\b/i;
   const buttons = Array.from(document.querySelectorAll("button"))
     .filter((b) => {
       const l = b.getAttribute("aria-label") || "";
-      return /^Play /.test(l) && !TRANSPORT.test(l);
+      return CFG.playLabel.test(l) && !CFG.transportLabel.test(l);
     })
-    .map((b) => ({
-      el: b,
-      title: (b.getAttribute("aria-label") || "").replace(/^Play\s+/, "").trim(),
-    }));
+    .map((b) => ({ el: b, title: CFG.titleFrom(b.getAttribute("aria-label") || "") }));
 
   // The generator's own tag line for the track. If it omits "instrumental", vocals may
   // have been added despite the prompt -- disqualifying on an instrumental channel.
@@ -80,7 +103,7 @@
 
   const pauseAll = () => {
     Array.from(document.querySelectorAll("button"))
-      .filter((b) => /^Pause /.test(b.getAttribute("aria-label") || ""))
+      .filter((b) => CFG.pauseLabel.test(b.getAttribute("aria-label") || ""))
       .forEach((b) => b.click());
   };
 
