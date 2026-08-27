@@ -34,12 +34,29 @@ WEIGHTS = {
 assert sum(WEIGHTS.values()) == 100
 
 
+# A percentile ramp stretches p10..p90 across the full score range whatever that
+# interval actually is. When a batch is degenerate -- takes of one track, or a handful
+# of near-identical files -- that interval is noise, and the ramp turns a 2% measurement
+# difference into a full-marks difference. Measured: six encodings of ONE song, whose raw
+# motif and pulse values agreed to within 5%, scored 78.6 to 94.1.
+#
+# Below this relative spread, a cohort metric carries no ranking information and is
+# flattened to neutral instead of amplified.
+MIN_COHORT_SPREAD = 0.20
+
+
 def _ramp(x, good, bad):
     """Linear falloff: 1.0 at `good`, 0.0 at `bad`."""
     if good == bad:
         return 1.0
     v = (x - bad) / (good - bad)
     return float(np.clip(v, 0.0, 1.0))
+
+
+def _cohort_spread(lo: float, hi: float) -> float:
+    """Relative width of a percentile interval, robust to values near zero."""
+    denom = max(abs(hi), abs(lo), 1e-9)
+    return (hi - lo) / denom
 
 
 def _band(x, lo_bad, lo_ok, hi_ok, hi_bad):
@@ -67,9 +84,14 @@ def score_cohort(results: list[dict]) -> list[dict]:
 
     motifs = np.array([r["metrics"]["motif_repetition"] for r in ok])
     motif_lo, motif_hi = float(np.percentile(motifs, 10)), float(np.percentile(motifs, 90))
+    motif_usable = _cohort_spread(motif_lo, motif_hi) >= MIN_COHORT_SPREAD
 
     pulses = np.array([r["metrics"].get("pulse_clarity", 0.0) for r in ok])
     pulse_lo, pulse_hi = float(np.percentile(pulses, 10)), float(np.percentile(pulses, 90))
+    pulse_usable = _cohort_spread(pulse_lo, pulse_hi) >= MIN_COHORT_SPREAD
+
+    flattened = [name for name, usable in
+                 (("motif", motif_usable), ("pulse", pulse_usable)) if not usable]
 
     for r in ok:
         m, sub = r["metrics"], {}
@@ -82,10 +104,14 @@ def score_cohort(results: list[dict]) -> list[dict]:
         # Motif repetition and pulse clarity, scored by position within the batch.
         # Floored at 0.2: mapping percentile straight to 0-1 makes the lowest track in a
         # small batch score zero, which exaggerates real differences.
-        sub["motif"] = WEIGHTS["motif"] * (0.2 + 0.8 * _ramp(
-            m["motif_repetition"], good=motif_hi, bad=motif_lo))
-        sub["pulse"] = WEIGHTS["pulse"] * (0.2 + 0.8 * _ramp(
-            m.get("pulse_clarity", 0.0), good=pulse_hi, bad=pulse_lo))
+        # A flattened metric scores everyone the same rather than ranking on noise.
+        sub["motif"] = WEIGHTS["motif"] * (
+            0.6 if not motif_usable
+            else 0.2 + 0.8 * _ramp(m["motif_repetition"], good=motif_hi, bad=motif_lo))
+        sub["pulse"] = WEIGHTS["pulse"] * (
+            0.6 if not pulse_usable
+            else 0.2 + 0.8 * _ramp(m.get("pulse_clarity", 0.0),
+                                   good=pulse_hi, bad=pulse_lo))
 
         # Spectral balance: distance from the batch median (smaller is better).
         dist = float(np.sum(np.abs(np.array(m["spectral_profile"]) - median_profile)))
@@ -119,6 +145,8 @@ def score_cohort(results: list[dict]) -> list[dict]:
             # "info" spot-check hints carry no penalty -- they may be intentional.
         r["score"] = round(max(0.0, base - penalty), 1)
         r["score_before_penalty"] = round(base, 1)
+        if flattened:
+            r["flattened_metrics"] = flattened
 
     return results
 
@@ -159,18 +187,37 @@ def discrimination(results: list[dict]) -> list[dict]:
     if len(scored) < 2:
         return []
 
+    # Subscore spread alone is misleading for the percentile-ramped metrics: the ramp
+    # stretches p10..p90 to full range whatever that interval is, so their subscore
+    # spread is large by construction. Report the RAW spread for those, which is what
+    # actually says whether the ranking means anything.
+    raw_key = {"motif": "motif_repetition", "pulse": "pulse_clarity"}
+    flattened = set(scored[0].get("flattened_metrics") or [])
+
     out = []
     for name, weight in WEIGHTS.items():
         vals = [r["subscores"].get(name, 0.0) for r in scored]
         spread = (max(vals) - min(vals)) / weight if weight else 0.0
-        out.append({
+        entry = {
             "metric": name,
             "weight": weight,
             "mean": round(sum(vals) / len(vals), 1),
             "spread": round(spread, 3),
-            "verdict": ("near-constant" if spread < 0.25
-                        else "weak" if spread < 0.50 else "good"),
-        })
+        }
+
+        key = raw_key.get(name)
+        if key:
+            raw = [r["metrics"].get(key, 0.0) for r in scored]
+            lo, hi = float(np.percentile(raw, 10)), float(np.percentile(raw, 90))
+            entry["raw_spread"] = round(_cohort_spread(lo, hi), 3)
+            if name in flattened:
+                entry["verdict"] = "flattened (no usable spread)"
+            else:
+                entry["verdict"] = ("weak" if entry["raw_spread"] < 0.35 else "good")
+        else:
+            entry["verdict"] = ("near-constant" if spread < 0.25
+                                else "weak" if spread < 0.50 else "good")
+        out.append(entry)
     return sorted(out, key=lambda d: -d["spread"])
 
 

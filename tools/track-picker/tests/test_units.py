@@ -333,6 +333,52 @@ def test_opener_hook_scale_tracks_the_weight():
     assert order[0]["title"] == "perfect"
 
 
+def _clone_batch(n, motif, pulse):
+    """n tracks whose cohort metrics are all but identical."""
+    out = []
+    for i in range(n):
+        t = make_track(f"clone {i}")
+        t["metrics"]["motif_repetition"] = motif + i * 0.001
+        t["metrics"]["pulse_clarity"] = pulse + i * 0.001
+        out.append(t)
+    return out
+
+
+def test_degenerate_cohort_does_not_manufacture_score_differences():
+    """Six encodings of ONE song agreed to within 5% on the raw metrics yet scored
+    78.6 to 94.1, because the percentile ramp stretches whatever interval it is given."""
+    tracks = _clone_batch(6, motif=0.36, pulse=0.51)
+    score_cohort(tracks)
+    scores = [t["score"] for t in tracks]
+    assert max(scores) - min(scores) < 2.0, scores
+    assert set(tracks[0]["flattened_metrics"]) == {"motif", "pulse"}
+
+
+def test_real_spread_cohort_is_not_flattened():
+    """The guard must not fire on a batch that genuinely differs, or it would throw
+    away the ranking it exists to produce."""
+    tracks = _clone_batch(10, motif=0.30, pulse=0.30)
+    for i, t in enumerate(tracks):          # widen to a realistic spread
+        t["metrics"]["motif_repetition"] = 0.25 + i * 0.03
+        t["metrics"]["pulse_clarity"] = 0.30 + i * 0.04
+    score_cohort(tracks)
+    assert not tracks[0].get("flattened_metrics")
+    motifs = [t["subscores"]["motif"] for t in tracks]
+    assert max(motifs) - min(motifs) > 5.0, motifs
+
+
+def test_discrimination_reports_raw_spread_for_cohort_metrics():
+    """Subscore spread is large by construction for a percentile ramp, so it cannot
+    reveal a degenerate batch. Raw spread can."""
+    from score import discrimination
+    tracks = _clone_batch(6, motif=0.36, pulse=0.51)
+    score_cohort(tracks)
+    d = {x["metric"]: x for x in discrimination(tracks)}
+    assert d["motif"]["raw_spread"] < 0.10
+    assert "flattened" in d["motif"]["verdict"]
+    assert "raw_spread" not in d["hook"]      # absolute metric, no raw column
+
+
 def test_discrimination_flags_a_constant_metric():
     """A metric that scores every track identically contributes nothing to ranking."""
     from score import discrimination

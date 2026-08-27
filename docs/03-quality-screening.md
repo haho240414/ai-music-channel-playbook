@@ -166,6 +166,24 @@ Two design choices worth copying:
 balance for a genre. But a track that is a clear outlier *among its own episode* is worth
 looking at. Comparing against the cohort median avoids fabricating numbers.
 
+**But check the batch has spread before ranking on it.** A percentile ramp stretches
+p10–p90 across the full score range *whatever that interval is*. Give it a degenerate
+batch — takes of one track, a handful of near-identical files — and it turns a 2%
+measurement difference into a full-marks difference.
+
+Measured: six encodings of one song (WAV, FLAC, MP3 at 320/128/64k, AAC 96k) whose raw
+motif and pulse values agreed to within 5% scored **78.6 to 94.1**. Confident-looking
+numbers, pure noise.
+
+When a cohort metric's raw p10–p90 spread falls below ~20%, flatten it to a neutral value
+and say so, rather than ranking on noise. On a real 30-track batch nothing flattens
+(motif 50%, pulse 68% raw spread) and no score moves; on the degenerate batch the spurious
+15.5-point spread collapses to 0.7.
+
+The same trap catches the diagnostic: **subscore spread cannot reveal this**, because the
+ramp guarantees a wide subscore spread regardless. Report the *raw* spread for
+percentile-ramped metrics.
+
 **Floor the relative metrics.** Mapping percentile rank straight to 0–100 means the lowest
 track in a small batch scores zero, which exaggerates real differences. Map to 0.2–1.0.
 
@@ -197,7 +215,14 @@ report prints the discrimination table for every run:
 | … | | | | |
 | stereo | 3 | 3.0 | 13% | 🔴 near-constant |
 
-Anything marked near-constant on your batch is weight better spent elsewhere.
+Anything marked near-constant on your batch is weight better spent elsewhere. For the
+percentile-ramped metrics the table also prints raw spread, and marks them *flattened*
+when the batch had nothing real to rank on.
+
+**Codec does not affect the measurements.** The same source as WAV, FLAC, MP3 (320/128/64k)
+and AAC 96k produced raw metrics agreeing to within 5%, and identical spectral balance —
+analysis runs at 22.05 kHz, so every codec's high-frequency rolloff sits above the Nyquist
+limit and is simply not seen. Mixed-format batches are safe.
 
 ## Three grades
 
