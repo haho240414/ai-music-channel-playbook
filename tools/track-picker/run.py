@@ -15,6 +15,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -49,14 +50,26 @@ def download(urls_json: str, audio_dir: str) -> list[dict]:
         for j, url in enumerate(e.get("urls") or []):
             name = slug(title, i) + (f"_take{j+1}" if len(e["urls"]) > 1 else "") + ".m4a"
             jobs.append({"url": url, "path": os.path.join(audio_dir, name),
-                         "title": title, "target_bpm": bpm, "tags": e.get("tags")})
+                         "title": title, "target_bpm": bpm, "tags": e.get("tags"),
+                         "downloaded": True})
 
     def fetch(job):
-        if os.path.exists(job["path"]) and os.path.getsize(job["path"]) > 10000:
+        path = job["path"]
+        if os.path.exists(path) and os.path.getsize(path) > 10000:
             return job
+        # Write to a temporary name and rename on success. A process killed mid-download
+        # otherwise leaves a partial file that sails past any size check -- measured, a
+        # 20%-truncated 3 MB track is 611 KB -- and is then treated as a cache hit
+        # forever, failing to decode on every subsequent run.
+        tmp = path + ".part"
         req = urllib.request.Request(job["url"], headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=90) as r, open(job["path"], "wb") as out:
-            out.write(r.read())
+        try:
+            with urllib.request.urlopen(req, timeout=90) as r, open(tmp, "wb") as out:
+                shutil.copyfileobj(r, out)
+            os.replace(tmp, path)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
         return job
 
     with ThreadPoolExecutor(max_workers=4) as ex:
@@ -276,6 +289,11 @@ def main():
             print(f"  {i}/{len(jobs)} {r['file']} -> {r['tier']}")
         except Exception as e:  # noqa: BLE001
             print(f"  {i}/{len(jobs)} {os.path.basename(j['path'])} -> failed: {e}")
+            # Self-heal a corrupt download so the next run refetches it. Only ever
+            # touch files this tool fetched -- never one the user pointed us at.
+            if j.get("downloaded") and os.path.exists(j["path"]):
+                os.remove(j["path"])
+                print("      removed the unreadable download; it will be refetched")
 
     # Tags missing on SOME tracks is a per-track problem, already flagged above.
     # Tags missing on ALL of them is a setup problem -- tag scraping is page-format

@@ -247,6 +247,14 @@ Two things that break a naive version of this:
 - **Labels change under you.** A play button's label becomes "Pause" while playing. Capture
   every track's title when you enumerate the buttons, not inside the loop.
 
+**Cache partial downloads safely.** Write to a temporary name and rename on success. A
+process killed mid-download otherwise leaves a partial file that passes any plausible size
+check — a 20%-truncated 3 MB track is still 611 KB — and is then treated as a valid cache
+entry forever, failing to decode on every later run. Pair that with deleting a downloaded
+file that fails to decode, so the next run refetches it instead of reporting the same
+error indefinitely. Only delete files the tool fetched itself, never ones the user pointed
+it at.
+
 On format: these services typically serve compressed audio (AAC in an `.m4a` container)
 rather than WAV. That's fine. At the bitrates in use the difference from lossless is
 inaudible, and YouTube re-encodes everything on upload anyway, so a lossless master's

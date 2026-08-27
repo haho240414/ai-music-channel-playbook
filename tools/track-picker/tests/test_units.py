@@ -305,6 +305,58 @@ def test_numbered_movements_stay_separate_tracks(tmp_path):
     assert len(kept) == 3 and dropped == []
 
 
+# ---------------------------------------------------------------- download safety
+
+
+def test_download_is_atomic(tmp_path, monkeypatch):
+    """A process killed mid-download must not leave a partial file that later counts as
+    a cache hit. Measured: a 20%-truncated 3 MB track is 611 KB and sails past any size
+    check, then fails to decode on every subsequent run."""
+    import io
+    import json as _json
+    import run
+
+    urls = tmp_path / "u.json"
+    urls.write_text(_json.dumps([{"title": "T", "urls": ["http://x/a.m4a"]}]))
+    audio = tmp_path / "audio"
+
+    class Boom(io.BytesIO):
+        def read(self, *a):
+            raise IOError("connection dropped")
+
+    def exploding_urlopen(*a, **k):
+        class Ctx:
+            def __enter__(self): return Boom(b"")
+            def __exit__(self, *e): return False
+        return Ctx()
+
+    monkeypatch.setattr(run.urllib.request, "urlopen", exploding_urlopen)
+    try:
+        run.download(str(urls), str(audio))
+    except Exception:
+        pass
+
+    leftovers = list(audio.glob("*")) if audio.exists() else []
+    assert not any(p.suffix == ".m4a" for p in leftovers), leftovers
+    assert not any(p.name.endswith(".part") for p in leftovers), leftovers
+
+
+def test_downloaded_jobs_are_marked(tmp_path):
+    """run.py only deletes files it fetched itself; a --dir file must never be removed."""
+    import json as _json
+    import run
+
+    urls = tmp_path / "u.json"
+    urls.write_text(_json.dumps([{"title": "T", "urls": []}]))
+    from_urls = run.download(str(urls), str(tmp_path / "a"))
+    assert all(j.get("downloaded") for j in from_urls)
+
+    (tmp_path / "d").mkdir()
+    (tmp_path / "d" / "01_Song.wav").write_bytes(b"")
+    from_dir = run.collect_from_dir(str(tmp_path / "d"))
+    assert from_dir and not any(j.get("downloaded") for j in from_dir)
+
+
 # ---------------------------------------------------------------- weights
 
 
