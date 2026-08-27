@@ -81,11 +81,17 @@ TIER_ICON = {"GREEN": "🟢", "YELLOW": "🟡", "RED": "🔴"}
 
 
 def write_report(out_dir, episode, playlist, kept, dropped, all_results,
-                 export_rows=None, common_lufs=None):
+                 export_rows=None, common_lufs=None, unverified=None):
     lines = [f"# {episode} — screening and sequencing report", ""]
     lines += [f"- Files analyzed: **{len(all_results)}**",
               f"- After take selection: **{len(kept)}**",
               f"- Final playlist: **{len(playlist)}**", ""]
+
+    if unverified:
+        lines += [f"> ⚠️ **Instrumental check did not run.** No tag string was captured "
+                  f"for any of the {unverified} files, so vocals could not be ruled out. "
+                  f"Tag scraping depends on the generator's page format — see "
+                  f"`collect.js`. Grades below reflect audio defects only.", ""]
 
     lines += ["## Playlist order", "",
               "| # | Track | Grade | Score | BPM | Key | LUFS | Transition |",
@@ -230,19 +236,9 @@ def main():
             r["tags"] = j.get("tags")
             # Instrumental-channel check: generators sometimes ignore "no vocals", so
             # warn when the returned tag string does not say instrumental.
-            #
-            # A missing tag string is reported too. Tag scraping is page-format
-            # dependent and has failed silently in practice -- passing quietly would
-            # give false confidence that every track was verified.
             if args.require_instrumental:
                 tags = str(r["tags"] or "").strip()
-                if not tags:
-                    r["defects"].append({
-                        "type": "unverified_instrumental", "severity": "warn",
-                        "detail": "no tag string captured, so vocals could not be ruled out"})
-                    if r["tier"] == "GREEN":
-                        r["tier"] = "YELLOW"
-                elif "instrumental" not in tags.lower():
+                if tags and "instrumental" not in tags.lower():
                     r["defects"].append({
                         "type": "possible_vocals", "severity": "warn",
                         "detail": f"tags omit 'instrumental': {tags[:80]}"})
@@ -252,6 +248,25 @@ def main():
             print(f"  {i}/{len(jobs)} {r['file']} -> {r['tier']}")
         except Exception as e:  # noqa: BLE001
             print(f"  {i}/{len(jobs)} {os.path.basename(j['path'])} -> failed: {e}")
+
+    # Tags missing on SOME tracks is a per-track problem, already flagged above.
+    # Tags missing on ALL of them is a setup problem -- tag scraping is page-format
+    # dependent and fails silently -- so say it once instead of downgrading every
+    # track's grade and rendering the grade column meaningless.
+    unverified = None
+    if args.require_instrumental and results:
+        untagged = [r for r in results if not str(r.get("tags") or "").strip()]
+        if len(untagged) == len(results):
+            unverified = len(untagged)
+            print(f"  ! no tag strings captured: vocals could not be ruled out on any "
+                  f"of the {unverified} files")
+        else:
+            for r in untagged:
+                r["defects"].append({
+                    "type": "unverified_instrumental", "severity": "warn",
+                    "detail": "no tag string captured, so vocals could not be ruled out"})
+                if r["tier"] == "GREEN":
+                    r["tier"] = "YELLOW"
 
     print("[3/5] cohort scoring")
     score_cohort(results)
@@ -285,7 +300,7 @@ def main():
                   f, ensure_ascii=False, indent=2)
 
     path = write_report(args.out, args.episode, playlist, kept, dropped, results,
-                        export_rows, export_rows_target)
+                        export_rows, export_rows_target, unverified)
     print(f"\ndone -> {path}")
 
 

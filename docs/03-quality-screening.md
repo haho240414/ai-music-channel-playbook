@@ -81,6 +81,35 @@ autocorrelation peak to sub-frame precision.
 With both fixed, BPM estimates landed within ~1–2 BPM of the prompted values across a batch
 — without being told the target.
 
+### Choosing the metrical level when no target BPM is known
+
+Folding into a "preferred tempo range" and picking whatever lands closest to it is the
+obvious approach and it is wrong often enough to matter. On a real 30-file batch it put
+**6 tracks on a grid that anti-aligned with the music** — negative pulse clarity — which
+makes every downstream rhythm measurement meaningless.
+
+Score each metrical candidate by how well a beat grid at that period actually explains
+the onset envelope, damped by a log-normal tempo prior. The prior is still needed: a
+signal periodic at P also correlates at P/2, so a plain maximum always picks the fastest
+multiple.
+
+```
+score(candidate) = pulse_strength(period) × exp(−½ (log₂(candidate / 105) / 0.75)²)
+```
+
+Measured on that batch, blind estimates went from consistently ~4/3 too fast to matching
+the prompted BPM within 1–2 on 9 of 10 tracks:
+
+| Prompted | Preference-only | Grid-scored |
+|---|---|---|
+| 86 | 101–114 | **84.9 / 86.0** |
+| 82 | 109.8 | **82.4** |
+| 80 | 106.7 | **80.0** |
+| 72 | 110.1 | **73.4** |
+| 88 | 118.7 | **89.0** |
+
+Tracks below the reliability floor: **6 of 30 → 0 of 30**.
+
 ### What to measure instead
 
 Not "did the BPM change" but **did the beat fall apart**. For each window, compute the
@@ -90,6 +119,19 @@ one beat later. Where that collapses, the pulse is genuinely gone.
 Then the critical guard: **skip windows where there's no beat by design.** Intro build-ups
 and outro fades legitimately have no drums. Only evaluate windows whose energy is at least
 ~60% of the track median. Without this, every track flags at its intro and outro.
+
+Three more rules keep the output actionable rather than noisy:
+
+- **If the track's median clarity is very low, say so and emit no timestamps.** That means
+  the tempo estimate is wrong, not that the playing is loose — listing 33 weak windows out
+  of 36 tells the reader nothing.
+- **Require a weak window to be weak in absolute terms too**, not only relative to its own
+  track. A purely relative threshold flags still-clear passages on a crisp track while
+  letting a mushy one off, which is backwards.
+- **Require a minimum count.** One or two weak windows out of forty is noise.
+
+Tightening these cut spot-check reports from 36% of tracks to 23% — the difference between
+a hint someone reads and one they learn to skip.
 
 ### And then don't call it a defect
 

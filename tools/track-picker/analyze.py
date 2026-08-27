@@ -142,6 +142,11 @@ def onset_envelope(y: np.ndarray, sr: int, n_fft: int = 1024, hop: int = 256,
 # x1/2 -- handling only octaves leaves every track flagged for phantom "tempo drift".
 _METRICAL = (1 / 3, 1 / 2, 2 / 3, 3 / 4, 1.0, 4 / 3, 3 / 2, 2.0, 3.0)
 
+# Beat-grid reporting thresholds, all calibrated against a real 30-file batch.
+UNRELIABLE_PULSE = 0.10     # below this the tempo estimate, not the playing, is wrong
+WEAK_PULSE_CEILING = 0.20   # absolute ceiling for calling a window weak
+MIN_WEAK_WINDOWS = 3        # fewer than this is noise, not a passage
+
 
 def _autocorr(env: np.ndarray) -> np.ndarray:
     e = env - env.mean()
@@ -166,17 +171,48 @@ def metrical_fold(bpm, ref):
     return min([bpm * f for f in _METRICAL], key=lambda c: abs(c - ref))
 
 
-def fold_to_range(bpm, lo=78.0, hi=142.0, prefer=105.0):
-    """When no target BPM is known, fold into the range people actually feel as the beat.
+def pulse_strength(env: np.ndarray, period: float) -> float:
+    """Normalized autocorrelation of the onset envelope at one beat period.
 
-    Autocorrelation gives the same answer for 60 and 120 BPM, so a preferred range is
-    required to disambiguate -- the standard approach in tempo-perception work.
+    How well a beat grid at this period actually explains the signal. Near zero or
+    negative means it does not.
+    """
+    if env.size < 8 or period is None:
+        return -1.0
+    P = int(round(period))
+    if P < 2 or P >= len(env):
+        return -1.0
+    e = env - env.mean()
+    den = float(np.sum(e * e)) + 1e-12
+    return float(np.sum(e[:-P] * e[P:])) / den * len(e) / max(1, len(e) - P)
+
+
+def fold_to_range(bpm, env=None, frame_rate=None,
+                  lo=55.0, hi=190.0, prefer=105.0, sigma=0.75):
+    """When no target BPM is known, pick the metrical level the signal supports.
+
+    Autocorrelation gives the same answer for 60 and 120 BPM, so something has to break
+    the tie. Choosing purely by "closest to a preferred tempo" picks the wrong multiple
+    often enough to wreck the downstream beat-grid analysis -- measured on a real batch,
+    5 of 30 tracks ended up with *negative* pulse clarity, meaning the grid anti-aligned
+    with the music.
+
+    So score each candidate by how well a grid at that period explains the onset envelope,
+    damped by a log-normal tempo prior (a plain maximum would always favour the fastest
+    multiple, since a signal periodic at P also correlates at P/2).
     """
     if bpm is None:
         return None
-    cands = [bpm * f for f in _METRICAL]
-    inside = [c for c in cands if lo <= c <= hi]
-    return min(inside or cands, key=lambda c: abs(c - prefer))
+    cands = [c for c in (bpm * f for f in _METRICAL) if lo <= c <= hi] or [bpm]
+
+    if env is None or frame_rate is None:
+        return min(cands, key=lambda c: abs(c - prefer))
+
+    def score(c):
+        prior = float(np.exp(-0.5 * (np.log2(c / prefer) / sigma) ** 2))
+        return pulse_strength(env, 60.0 * frame_rate / c) * prior
+
+    return max(cands, key=score)
 
 
 def estimate_tempo(env: np.ndarray, frame_rate: float, target_bpm=None,
@@ -192,7 +228,8 @@ def estimate_tempo(env: np.ndarray, frame_rate: float, target_bpm=None,
     k = int(np.argmax(ac[min_lag:max_lag])) + min_lag
     lag = _parabolic(ac, k)
     bpm = 60.0 * frame_rate / lag
-    folded = metrical_fold(bpm, target_bpm) if target_bpm else fold_to_range(bpm)
+    folded = (metrical_fold(bpm, target_bpm) if target_bpm
+              else fold_to_range(bpm, env=env, frame_rate=frame_rate))
     if folded:
         bpm = folded
         lag = 60.0 * frame_rate / bpm
@@ -242,8 +279,24 @@ def rhythm_stability(env: np.ndarray, frame_rate: float, period: float,
         return {"clarity_median": None, "weak_windows": []}
     clar = np.array([v for _, v in vals])
     med = float(np.median(clar))
-    thr = max(0.04, med * 0.40)
+
+    # If the grid barely explains the music anywhere, the tempo estimate is wrong rather
+    # than the performance being loose. Listing 33 "weak" windows out of 36 is noise, so
+    # report the low clarity and emit no timestamps.
+    if med < UNRELIABLE_PULSE:
+        return {"clarity_median": round(med, 3), "weak_windows": [],
+                "windows_judged": len(vals), "grid_unreliable": True}
+
+    # Weak both relative to this track AND in absolute terms. A purely relative
+    # threshold flags still-clear windows on a crisp track while letting a mushy one
+    # off, which is backwards.
+    thr = max(0.04, min(med * 0.40, WEAK_PULSE_CEILING))
     weak = [(t, round(c, 3)) for (t, c) in vals if c < thr]
+
+    # One or two weak windows out of forty is noise, not a passage worth checking.
+    if len(weak) < MIN_WEAK_WINDOWS:
+        weak = []
+
     return {"clarity_median": round(med, 3), "weak_windows": weak,
             "windows_judged": len(vals)}
 

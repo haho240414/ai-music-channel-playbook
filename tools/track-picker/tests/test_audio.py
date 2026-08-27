@@ -104,6 +104,35 @@ def test_tempo_matches_known_modulation_rate(audio_dir):
     assert any(abs(300.0 / bpm - k) < 0.15 * k for k in (1, 2, 3, 4, 6, 8)), bpm
 
 
+def test_blind_tempo_picks_a_grid_the_music_supports(audio_dir):
+    """With no target BPM, the metrical level must be chosen by how well a beat grid
+    explains the signal -- not by closeness to a preferred tempo.
+
+    Picking by preference alone put 6 of 30 real tracks on a grid that ANTI-aligned with
+    the music (negative pulse clarity), which made the whole rhythm analysis garbage.
+    """
+    from analyze import onset_envelope, pulse_strength
+    r = analyze_file(str(audio_dir / "clean.wav"))
+    _, _, mono = decode(str(audio_dir / "clean.wav"))
+    onset, rate = onset_envelope(mono, 22050)
+    strength = pulse_strength(onset, 60.0 * rate / r["tempo"]["bpm"])
+    assert strength > 0.10, (r["tempo"]["bpm"], strength)
+
+
+def test_unreliable_grid_emits_no_spot_checks(audio_dir):
+    """When the grid does not explain the music, listing 33 'weak' windows out of 36 is
+    noise. Report the low clarity instead and stay quiet."""
+    from analyze import rhythm_stability, rms_envelope, onset_envelope
+    _, _, mono = decode(str(audio_dir / "clean.wav"))
+    env = rms_envelope(mono, 22050, 0.1)
+    onset, rate = onset_envelope(mono, 22050)
+    # Force a nonsense beat period so the grid cannot align.
+    bogus = rhythm_stability(onset, rate, period=rate * 0.37, rms_env=env)
+    if bogus.get("clarity_median") is not None and bogus["clarity_median"] < 0.10:
+        assert bogus["weak_windows"] == []
+        assert bogus.get("grid_unreliable") is True
+
+
 def test_key_reports_confidence(audio_dir):
     r = analyze_file(str(audio_dir / "clean.wav"))
     assert 0.0 <= r["key"]["confidence"] <= 1.0
