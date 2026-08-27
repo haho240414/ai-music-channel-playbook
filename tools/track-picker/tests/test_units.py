@@ -305,6 +305,64 @@ def test_numbered_movements_stay_separate_tracks(tmp_path):
     assert len(kept) == 3 and dropped == []
 
 
+# ---------------------------------------------------------------- report rendering
+
+
+def _table_rows_are_aligned(text):
+    """Every row must have the same number of UNESCAPED pipes as its table's rule."""
+    import re
+    bad, expect = [], None
+    for line in text.splitlines():
+        if re.match(r"^\|[-\s|]+\|$", line):
+            expect = len(re.split(r"(?<!\\)\|", line))
+        elif line.startswith("|") and expect:
+            if len(re.split(r"(?<!\\)\|", line)) != expect:
+                bad.append(line)
+        elif not line.startswith("|"):
+            expect = None
+    return bad
+
+
+def _report_for(titles, tmp_path):
+    import run as R
+    tracks = [make_track(t) for t in titles]
+    score_cohort(tracks)
+    pl = build_playlist(tracks)
+    return open(R.write_report(str(tmp_path), "ep", pl, tracks, [], tracks)).read()
+
+
+def test_report_survives_hostile_titles(tmp_path):
+    """Generators invent titles. A pipe or newline in one silently breaks the markdown
+    table for every row after it."""
+    text = _report_for(["Pipe | In Title", "Under_score *star*", "Back`tick`",
+                        "Newline\nInside", "Plain One"], tmp_path)
+    assert _table_rows_are_aligned(text) == []
+    assert r"Pipe \| In Title" in text
+    assert "Newline\nInside" not in text        # the newline must not escape the row
+
+
+def test_report_renders_a_flattened_metric(tmp_path):
+    """The flattening added for degenerate batches introduced a verdict string the
+    report's icon lookup did not know, and KeyError'd on exactly those batches."""
+    import run as R
+    tracks = _clone_batch(6, motif=0.36, pulse=0.51)
+    score_cohort(tracks)
+    assert tracks[0].get("flattened_metrics"), "expected this batch to flatten"
+    pl = build_playlist(tracks)
+    text = open(R.write_report(str(tmp_path), "ep", pl, tracks, [], tracks)).read()
+    assert "flattened" in text
+    assert _table_rows_are_aligned(text) == []
+
+
+def test_report_icon_lookup_is_total():
+    """Any future verdict string must degrade, not crash."""
+    import inspect
+
+    import run as R
+    src = inspect.getsource(R.write_report)
+    assert '}.get(d["verdict"]' in src, "icon lookup must use .get with a default"
+
+
 # ---------------------------------------------------------------- download safety
 
 

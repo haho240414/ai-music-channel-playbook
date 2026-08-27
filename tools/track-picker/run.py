@@ -123,6 +123,16 @@ def collect_from_dir(audio_dir: str) -> list[dict]:
 TIER_ICON = {"GREEN": "🟢", "YELLOW": "🟡", "RED": "🔴"}
 
 
+def md_cell(value) -> str:
+    """Make a value safe to drop into a markdown table cell.
+
+    Generators invent titles, and a pipe or a newline in one silently breaks the table
+    for every row after it.
+    """
+    s = str(value if value is not None else "")
+    return s.replace("|", "\\|").replace("\n", " ").replace("\r", " ").strip()
+
+
 def write_report(out_dir, episode, playlist, kept, dropped, all_results,
                  export_rows=None, common_lufs=None, unverified=None,
                  download_failures=None):
@@ -156,7 +166,7 @@ def write_report(out_dir, episode, playlist, kept, dropped, all_results,
         conf = t["key"].get("confidence", 1.0)
         kmark = "" if conf >= 0.5 else "?"  # marks a low-confidence key estimate
         lines.append(
-            f"| {t['position']} | {t.get('title', t['file'])} | {TIER_ICON[t['tier']]} | "
+            f"| {t['position']} | {md_cell(t.get('title', t['file']))} | {TIER_ICON[t['tier']]} | "
             f"{t['score']:.0f} | {t['tempo']['bpm'] or '?'} | {t['key']['key'] or '?'}"
             f"{kmark} ({t['key']['camelot'] or '?'}) | {t['loudness'].get('lufs', '?')} | {trs} |"
         )
@@ -182,7 +192,8 @@ def write_report(out_dir, episode, playlist, kept, dropped, all_results,
         dfx = "; ".join(f"{d['type']}({d['severity']})" for d in real) or "none"
         mark = "" if id(r) in chosen else " *(not used)*"
         lines.append(
-            f"| {r.get('title', r['file'])}{mark} | {TIER_ICON[r['tier']]} | {r.get('score', 0):.0f} | "
+            f"| {md_cell(r.get('title', r['file']))}{mark} | {TIER_ICON[r['tier']]} | "
+            f"{r.get('score', 0):.0f} | "
             f"{s.get('hook', 0):.0f} | {s.get('motif', 0):.0f} | {s.get('pulse', 0):.0f} | "
             f"{s.get('spectral', 0):.0f} | {s.get('dynamics', 0):.0f} | {s.get('stereo', 0):.0f} | "
             f"{s.get('loudness', 0):.0f} | {dfx} |"
@@ -203,7 +214,7 @@ def write_report(out_dir, episode, playlist, kept, dropped, all_results,
                   "Playback loudness is normalized by the platform anyway.", "",
                   "| # | File | Original LUFS | Gain applied |", "|---|---|---|---|"]
         for r in export_rows:
-            lines.append(f"| {r['position']} | `{r['file']}` | {r['lufs_before']} | "
+            lines.append(f"| {r['position']} | `{md_cell(r['file'])}` | {r['lufs_before']} | "
                          f"{r['gain_db']:+.2f} dB |")
         lines += ["", "### Chapter timestamps", "", "```"] + stamps + ["```"]
 
@@ -217,9 +228,12 @@ def write_report(out_dir, episode, playlist, kept, dropped, all_results,
                   "spent elsewhere on your material.", "",
                   "| Metric | Weight | Mean | Spread | |", "|---|---|---|---|---|"]
         for d in disc:
-            icon = {"good": "🟢", "weak": "🟡", "near-constant": "🔴"}[d["verdict"]]
-            lines.append(f"| {d['metric']} | {d['weight']} | {d['mean']} | "
-                         f"{d['spread']:.0%} | {icon} {d['verdict']} |")
+            # .get, not [] -- a new verdict string must never crash report generation.
+            # "flattened" once did exactly that, on the degenerate batches it exists for.
+            icon = {"good": "🟢", "weak": "🟡"}.get(d["verdict"], "🔴")
+            raw = f" (raw {d['raw_spread']:.0%})" if "raw_spread" in d else ""
+            lines.append(f"| {md_cell(d['metric'])} | {d['weight']} | {d['mean']} | "
+                         f"{d['spread']:.0%}{raw} | {icon} {d['verdict']} |")
         if weak:
             lines += ["", f"{len(weak)} metric(s) below the useful threshold on this "
                           f"batch: {', '.join(d['metric'] for d in weak)}."]

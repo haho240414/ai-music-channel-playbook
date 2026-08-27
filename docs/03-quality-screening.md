@@ -215,7 +215,13 @@ report prints the discrimination table for every run:
 | … | | | | |
 | stereo | 3 | 3.0 | 13% | 🔴 near-constant |
 
-Anything marked near-constant on your batch is weight better spent elsewhere. For the
+Anything marked near-constant on your batch is weight better spent elsewhere.
+
+Two things the report itself has to get right, both learned by breaking them: escape
+markdown metacharacters in any cell holding a generator-supplied title — one pipe silently
+breaks the table for every row below it — and look verdict icons up with a default, or a
+newly added verdict string crashes report generation on precisely the batches it was
+added for. For the
 percentile-ramped metrics the table also prints raw spread, and marks them *flattened*
 when the batch had nothing real to rank on.
 
