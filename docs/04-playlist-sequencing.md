@@ -160,6 +160,18 @@ Note the middle row: the improvement pass on its own made the worst transition *
 Both changes are needed — the search finds better arrangements, and the exponent tells it
 which arrangements are actually better.
 
+## Trimming to a target length
+
+If you generate 15 and want 12, do **not** just keep the top 12 by score. That discards
+whichever endpoint happens to score low, which undoes the entire reason for choosing the
+closer first.
+
+Measured on a real episode: `--limit 8` dropped the track marked as the finale (narrative
+position 1.0) — the one carrying the motif's complete return — and the episode ended on a
+track written to sit second-to-last.
+
+Keep the opener and closer, trim the middle by score, then re-sequence what remains.
+
 ## Semantic order
 
 Signal analysis cannot know that "Chairs Stacked, Lights Off" is an ending image. If the

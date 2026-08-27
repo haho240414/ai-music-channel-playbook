@@ -25,7 +25,7 @@ from analyze import analyze_file          # noqa: E402
 from export import export_playlist, timestamp_lines  # noqa: E402
 from score import (WEIGHTS, discrimination, normalize_title,  # noqa: E402
                    pick_best_takes, score_cohort)
-from sequence import build_playlist       # noqa: E402
+from sequence import build_playlist, limit_playlist  # noqa: E402
 
 AUDIO_EXT = (".m4a", ".mp3", ".wav", ".aac", ".flac", ".ogg")
 CLOSER_HINTS = ["walking home", "going home", "last", "packed", "closing", "end", "goodnight"]
@@ -304,10 +304,9 @@ def main():
 
     print("[5/5] sequencing")
     playlist = build_playlist(kept, closer_hint=CLOSER_HINTS, narrative=narrative)
-    if args.limit and len(playlist) > args.limit:
-        keep_ids = {id(t) for t in sorted(playlist, key=lambda t: -t["score"])[:args.limit]}
-        playlist = [t for t in playlist if id(t) in keep_ids]
-        playlist = build_playlist(playlist, closer_hint=CLOSER_HINTS, narrative=narrative)
+    if args.limit:
+        playlist = limit_playlist(playlist, args.limit,
+                                  closer_hint=CLOSER_HINTS, narrative=narrative)
 
     export_rows = None
     export_rows_target = None

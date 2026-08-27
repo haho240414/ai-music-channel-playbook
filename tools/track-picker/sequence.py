@@ -194,6 +194,37 @@ def _local_improve(order: list[dict], narrative: dict | None,
     return order
 
 
+def limit_playlist(order: list[dict], limit: int,
+                   closer_hint: list[str] | None = None,
+                   narrative: dict | None = None) -> list[dict]:
+    """Trim an ordered playlist to `limit` tracks, protecting both endpoints.
+
+    Trimming purely by score discards whichever endpoint happens to score low, which
+    undoes the whole point of choosing the closer deliberately. Measured on a real
+    episode: `--limit 8` dropped the track marked as the finale (narrative position 1.0),
+    the one carrying the motif's complete return, and the episode ended on a track meant
+    to sit second-to-last.
+
+    The opener and closer are kept; the middle is trimmed by score and re-sequenced.
+    """
+    if limit <= 0 or len(order) <= limit:
+        return order
+
+    opener, closer = order[0], order[-1]
+    if limit == 1:
+        keep = [opener]
+    elif limit == 2:
+        keep = [opener, closer]
+    else:
+        middle = order[1:-1]
+        room = limit - 2
+        keep = ([opener]
+                + sorted(middle, key=lambda t: -t.get("score", 0))[:room]
+                + [closer])
+
+    return build_playlist(keep, closer_hint=closer_hint, narrative=narrative)
+
+
 def build_playlist(tracks: list[dict], closer_hint: list[str] | None = None,
                    hook_max: float | None = None,
                    narrative: dict | None = None) -> list[dict]:

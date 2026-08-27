@@ -511,14 +511,47 @@ def test_scale_loudness_plan_equalizes_twenty_tracks():
         assert t["loudness"]["true_peak"] + gains[id(t)] <= -1.0 + 0.01
 
 
-def test_limit_reduces_and_reorders_cleanly():
-    """--limit path: trim to the top N, then re-sequence."""
-    tracks = _episode(20)
+@pytest.mark.parametrize("limit", [12, 10, 8, 6, 4, 3, 2, 1])
+def test_limit_keeps_both_endpoints(limit):
+    """Trimming by score alone discards whichever endpoint scores low. Measured on a
+    real episode: --limit 8 dropped the track marked as the finale (narrative 1.0)."""
+    from sequence import limit_playlist
+    tracks = _episode(15)
+    score_cohort(tracks)
+    narrative = {t["title"]: i / 14 for i, t in enumerate(tracks)}
+    # Make the intended finale the WORST scoring track, so score-only trimming would
+    # certainly drop it.
+    finale = next(t for t in tracks if narrative[t["title"]] == 1.0)
+    finale["score"] = 1.0
+    order = build_playlist(tracks, narrative=narrative)
+    assert order[-1] is finale
+
+    trimmed = limit_playlist(order, limit, narrative=narrative)
+    assert len(trimmed) == limit
+    assert [t["position"] for t in trimmed] == list(range(1, limit + 1))
+    assert trimmed[0] is order[0]
+    if limit >= 2:
+        assert trimmed[-1] is finale, "the deliberate closer must survive trimming"
+
+
+def test_limit_is_a_noop_when_already_short_enough():
+    from sequence import limit_playlist
+    tracks = _episode(6)
     score_cohort(tracks)
     order = build_playlist(tracks)
-    keep_ids = {id(t) for t in sorted(order, key=lambda t: -t["score"])[:12]}
-    trimmed = build_playlist([t for t in order if id(t) in keep_ids])
-    assert [t["position"] for t in trimmed] == list(range(1, 13))
+    assert limit_playlist(order, 10, narrative=None) is order
+    assert limit_playlist(order, 0, narrative=None) is order
+
+
+def test_limit_keeps_the_highest_scoring_middle():
+    from sequence import limit_playlist
+    tracks = _episode(12)
+    score_cohort(tracks)
+    order = build_playlist(tracks)
+    trimmed = limit_playlist(order, 6)
+    middle_kept = {t["title"] for t in trimmed[1:-1]}
+    middle_all = sorted(order[1:-1], key=lambda t: -t["score"])
+    assert middle_kept == {t["title"] for t in middle_all[:4]}
 
 
 # ---------------------------------------------------------------- timestamps
