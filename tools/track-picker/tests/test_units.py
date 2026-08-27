@@ -677,6 +677,31 @@ def test_timestamps_are_cumulative():
     assert total == pytest.approx(514.0)
 
 
+def test_timestamps_do_not_accumulate_rounding_drift():
+    """Chapter timestamps sum per-track durations, so any rounding compounds. Storing
+    duration at 0.1 s resolution put a 30-track episode ~1.5 s out by the end — enough
+    to misplace a chapter at the one-second granularity timestamps are displayed in."""
+    exact = 174.0631972789116
+    rows = [{"title": f"T{i}", "duration_s": exact} for i in range(30)]
+    lines, total = timestamp_lines(rows)
+    assert total == pytest.approx(exact * 30, abs=1e-6)
+
+    # The same episode with durations rounded to 0.1 s drifts measurably.
+    rounded = [{"title": f"T{i}", "duration_s": round(exact, 1)} for i in range(30)]
+    _, rough_total = timestamp_lines(rounded)
+    assert abs(rough_total - total) > 0.5
+
+
+def test_analysis_duration_is_not_rounded():
+    """Guard the source of the precision: analyze_file must not pre-round."""
+    import inspect
+
+    import analyze
+    src = inspect.getsource(analyze.analyze_file)
+    assert '"duration_s": len(mono) / sr' in src, \
+        "duration_s must keep full precision; timestamps accumulate it"
+
+
 def test_timestamps_cross_the_hour():
     rows = [{"title": f"T{i}", "duration_s": 700.0} for i in range(7)]
     lines, _ = timestamp_lines(rows)

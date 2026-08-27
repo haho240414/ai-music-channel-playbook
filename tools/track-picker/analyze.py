@@ -555,7 +555,10 @@ def analyze_file(path: str, target_bpm=None) -> dict:
     res = {
         "file": os.path.basename(path),
         "path": path,
-        "duration_s": round(len(mono) / sr, 1),
+        # Full precision, not rounded. Chapter timestamps accumulate these, so 0.1 s
+        # rounding compounds: ~1.5 s of drift by track 30, enough to misplace a chapter
+        # at the one-second granularity timestamps are displayed in.
+        "duration_s": len(mono) / sr,
         "target_bpm": target_bpm,
         "tempo": tempo,
         "rhythm": rhythm,

@@ -237,6 +237,15 @@ Once ordered and normalized:
 Generate timestamps from the *normalized, ordered* files, not from the planning document —
 actual durations drift from what was requested.
 
+Keep those durations at full precision. Timestamps are a running sum, so any rounding
+compounds: storing duration at 0.1 s resolution leaves a 30-track episode about 1.5 s out
+by the end, which is enough to misplace a chapter at the one-second granularity
+timestamps are displayed in. Measured after the fix, cumulative drift against the actual
+exported files is 0 ms.
+
+Encoder padding, by the way, is not the problem — measured across a 14-track episode it
+came to −73 ms in total, well inside a second.
+
 ## Implementation
 
 [`tools/track-picker/`](../tools/track-picker/)
