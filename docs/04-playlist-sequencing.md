@@ -76,6 +76,36 @@ best and second-best key ranged from 0.29 (certain) down to 0.027 (a coin flip).
 the key term by that margin stops the sequencer from optimizing against noise. Mark
 low-confidence estimates in the report so a human knows not to trust them.
 
+#### Don't bother trying to make key detection more confident
+
+Tempting, and measured to be a dead end. Across 30 real tracks, five aggregation
+strategies and two frequency bands:
+
+| Aggregation | Mean margin | Tracks below 0.20 |
+|---|---|---|
+| Median over frames (baseline) | 0.109 | 23 / 30 |
+| Mean over frames | 0.119 | 25 / 30 |
+| Energy-gated frames | 0.113 | 26 / 30 |
+| Per-frame whitening | 0.122 | 23 / 30 |
+| Spectral peaks only | 0.120 | 25 / 30 |
+
+Narrowing the band from 55–2200 Hz to 110–1760 Hz made every variant equal or worse.
+Nothing moves the needle: dense, reverberant, chord-extension-heavy material simply does
+not yield a confident single key. Spend the effort on handling the uncertainty rather
+than removing it.
+
+**And the discounted key term still earns its place.** Ablating it on a real episode:
+
+| | Σ key distance | Σ \|ΔBPM\| |
+|---|---|---|
+| Key ignored | 30 | **60** |
+| Confidence-weighted (default) | 24 | 68 |
+| Doubled weight | **20** | 74 |
+
+At a mean confidence of 0.50 the term still pulls key distance down meaningfully, trading
+a little tempo smoothness for it. Confidence weighting discounts the signal; it does not
+switch it off, which is the intended behaviour.
+
 **Energy arc** rises gently to a peak around 60% through, then descends:
 
 ```
