@@ -55,6 +55,8 @@ FADE = 0.9          # seconds of cross-fade on the title at each track change
 WAVE_GAIN = 3.5     # visual only: lifts the wave so quiet passages still move
 WAVE_DETAIL = 160   # px the wave is drawn at before being scaled up; see docs/07
 WAVE_SMOOTH = 6     # frames averaged together to settle the wave; see docs/07
+WAVE_STYLE = "wave"  # wave | bars | spectrum; see docs/07
+BAR_GAP = 0.27       # share of each bar's slot left empty, for the bars styles
 
 
 def pick_text_side(cover: str, width: int, height: int, paper: str) -> str:
@@ -331,11 +333,47 @@ def title_filters(items, width, height, ink, accent, title_font, label_font,
     return out
 
 
+def wave_mask(width: int, wave_h: int, detail: int, smooth: int,
+              style: str = WAVE_STYLE) -> str:
+    """The filter chain producing a white-on-black mask of the visualisation.
+
+    Three shapes, and they are not interchangeable:
+
+    - `wave`     mirrored waveform, the calm default
+    - `bars`     the same amplitude quantised into blocks
+    - `spectrum` a frequency equaliser, bars rising from the baseline
+
+    `spectrum` needs `ascale=log`. Music puts most of its energy in the low octaves, so
+    on a linear or sqrt amplitude axis every bar past the first few collapses into a
+    flat dashed line -- it looks broken, and it is not: it is what the spectrum of this
+    material actually is. A dB axis spreads it into the equaliser people expect.
+    """
+    smoothing = f",tmix=frames={smooth}" if smooth > 1 else ""
+    if style == "spectrum":
+        # averaging is showfreqs' own temporal smoothing; tmix on top would double it.
+        src = (f"volume={WAVE_GAIN},showfreqs=s={detail}x{wave_h}:mode=bar"
+               f":ascale=log:fscale=log:win_size=4096:averaging={max(smooth, 1)}"
+               f":colors=white,format=gray")
+    else:
+        src = (f"volume={WAVE_GAIN},showwaves=s={detail}x{wave_h}:mode=cline"
+               f":colors=white:rate=25,format=gray{smoothing}")
+    if style == "wave":
+        return f"{src},scale={width}:{wave_h}:flags=bicubic"
+    # Blocks: nearest-neighbour keeps the column edges hard, then a stripe expression
+    # blanks part of every slot so the blocks read as separate bars.
+    slot = max(int(round(width / max(detail, 1))), 3)
+    keep = max(int(round(slot * (1 - BAR_GAP))), 2)
+    return (f"{src},scale={width}:{wave_h}:flags=neighbor,"
+            + r"geq=lum='if(lt(mod(X\," + str(slot) + r")\," + str(keep)
+            + r")\,p(X\,Y)\,0)'")
+
+
 def build_filtergraph(cover, items, width, height, paper, ink, accent,
                       title_font, label_font, title_size, label_size,
                       wave_h, wave_alpha, is_video, offset: float = 0.0,
                       detail: int = WAVE_DETAIL, smooth: int = WAVE_SMOOTH,
-                      side: str = "left", label_col: str = None) -> str:
+                      side: str = "left", label_col: str = None,
+                      style: str = WAVE_STYLE) -> str:
     scale = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
              f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color={paper},setsar=1")
     wave_y = height - wave_h - int(height * 0.019)
@@ -346,10 +384,7 @@ def build_filtergraph(cover, items, width, height, paper, ink, accent,
         # Drawn narrow, averaged over several frames, then scaled up. At full width and
         # one frame the wave is a crisp instrument readout: it costs 78% of the file and
         # half its motion is per-frame noise rather than music. See docs/07.
-        f"[1:a]volume={WAVE_GAIN},showwaves=s={detail}x{wave_h}:mode=cline"
-        f":colors=white:rate=25,format=gray"
-        + (f",tmix=frames={smooth}" if smooth > 1 else "")
-        + f",scale={width}:{wave_h}:flags=bicubic[wm]",
+        f"[1:a]{wave_mask(width, wave_h, detail, smooth, style)}[wm]",
         f"color=c={accent}:s={width}x{wave_h}:r=25[wc]",
         f"[wc][wm]alphamerge,colorchannelmixer=aa={wave_alpha}[wave]",
         f"[bg][wave]overlay=0:{wave_y}:shortest={1 if is_video else 0}[v0]",
@@ -393,6 +428,10 @@ def main():
     ap.add_argument("--wave-detail", type=int, default=WAVE_DETAIL,
                     help="px the wave is drawn at before scaling up; lower is softer "
                          "and smaller (1920 = crisp instrument readout)")
+    ap.add_argument("--wave-style", choices=("wave", "bars", "spectrum"),
+                    default=WAVE_STYLE,
+                    help="wave = mirrored waveform, bars = the same amplitude as "
+                         "blocks, spectrum = a frequency equaliser")
     ap.add_argument("--text-side", choices=("auto", "left", "right"), default="auto",
                     help="which half of the frame the title sits in")
     ap.add_argument("--wave-smooth", type=int, default=WAVE_SMOOTH,
@@ -443,14 +482,14 @@ def main():
                               paper, ink, accent, title_font, label_font,
                               title_size, label_size, wave_h, args.wave_alpha,
                               is_video, args.preview_at, args.wave_detail,
-                              args.wave_smooth, side, label_col)
+                              args.wave_smooth, side, label_col, args.wave_style)
     if args.no_wave or args.no_titles:
         graph = build_filtergraph(args.cover, [] if args.no_titles else items,
                                   args.width, args.height, paper, ink, accent,
                                   title_font, label_font, title_size, label_size,
                                   wave_h, 0.0 if args.no_wave else args.wave_alpha,
                                   is_video, args.preview_at, args.wave_detail,
-                              args.wave_smooth, side, label_col)
+                              args.wave_smooth, side, label_col, args.wave_style)
 
     video = os.path.join(args.out, f"{args.name}.mp4")
     cmd = [FFMPEG, "-y", "-v", "error"]

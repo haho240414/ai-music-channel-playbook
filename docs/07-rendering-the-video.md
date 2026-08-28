@@ -91,6 +91,38 @@ streetlights while the lower-right was open water that varied a third as much
 (σ 0.021 against 0.074). `pick_text_side` compares the two halves and takes the steadier
 one; ties keep the left, so a channel stays consistent between episodes.
 
+## Three shapes, and they are not interchangeable
+
+`--wave-style` picks what the visualiser draws:
+
+- `wave` — mirrored waveform, the default
+- `bars` — the same amplitude quantised into blocks
+- `spectrum` — a frequency equaliser, bars rising from a baseline
+
+Bar styles need nearest-neighbour scaling (bicubic rounds the column edges straight back
+off) plus a `geq` stripe that blanks part of every slot, or the blocks touch and read as
+a solid wave again.
+
+`spectrum` needs `ascale=log`, and finding that out took four passes. On a linear or
+sqrt amplitude axis every bar past the first few collapses into a flat dashed line. That
+is not a bug: music really does put nearly all of its energy in the low octaves. A dB
+axis spreads it into the equaliser people expect.
+
+Measured over the same passage, same metric as the smoothing section:
+
+| Style | Painted area | Response | Jitter |
+|---|---|---|---|
+| `wave` | 21.8% | 6.49 | 2.18 |
+| `bars` | 15.2% | 5.26 | 1.72 |
+| `spectrum` | 39.5% | 1.02 | 0.26 |
+
+`spectrum` fills 2.6× more of the band than `bars` while responding to the music 5× less.
+The dB axis that makes it look like an equaliser is the same thing that flattens its
+dynamics, so it settles into a near-fixed spectral silhouette: busy to look at, saying
+little. Its ratio of response to jitter is the best of the three, which is the same trap
+a sparse `p2p` wave set earlier — a ratio flatters anything that barely moves. `bars`
+keeps the waveform's responsiveness and still reads as bars.
+
 ## Matching the wave to the channel
 
 `--wave-detail` and `--wave-smooth` are not taste settings. Crisp detail earns its place

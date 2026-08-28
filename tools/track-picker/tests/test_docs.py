@@ -195,3 +195,11 @@ def test_wave_smooth_matches_the_doc():
     m = re.search(r"`WAVE_SMOOTH = (\d+)`", doc)
     assert m, "docs/07 no longer states WAVE_SMOOTH"
     assert int(m.group(1)) == render.WAVE_SMOOTH
+
+
+def test_style_table_lists_every_supported_style():
+    """A style the docs do not mention is a style nobody will find."""
+    doc = read("docs", "07-rendering-the-video.md")
+    for style in ("wave", "bars", "spectrum"):
+        assert f"`{style}`" in doc
+        render.wave_mask(1920, 130, 64, 3, style)  # and it has to build

@@ -6,6 +6,7 @@ planning, and playlist ordering.
 from __future__ import annotations
 
 import os
+import re
 import sys
 
 import pytest
@@ -940,3 +941,42 @@ def test_layout_x_is_an_expression_for_the_right_side(side):
         assert geo["x"] == str(int(1920 * 0.068))
     else:
         assert geo["x"].startswith("w-tw-")
+
+
+# --- Visualisation styles ------------------------------------------------------
+
+
+def test_wave_style_wave_is_smooth_and_ungapped():
+    m = render.wave_mask(1920, 130, 160, 6, "wave")
+    assert "showwaves" in m and "bicubic" in m
+    assert "geq" not in m, "the smooth wave must not be cut into bars"
+
+
+@pytest.mark.parametrize("style", ["bars", "spectrum"])
+def test_bar_styles_are_hard_edged_and_gapped(style):
+    """Bars need nearest-neighbour (bicubic would round the column edges back off) and
+    the stripe expression that blanks part of every slot."""
+    m = render.wave_mask(1920, 130, 64, 3, style)
+    assert "neighbor" in m
+    assert "geq=lum=" in m and r"mod(X\," in m
+
+
+def test_spectrum_uses_a_decibel_amplitude_axis():
+    """Music puts nearly all its energy in the low octaves. On a linear or sqrt axis
+    every bar past the first few collapses to a flat dashed line -- measured, not
+    guessed. ascale=log spreads it into the equaliser people expect."""
+    m = render.wave_mask(1920, 130, 48, 6, "spectrum")
+    assert "showfreqs" in m and "ascale=log" in m and "fscale=log" in m
+
+
+def test_spectrum_does_not_smooth_twice():
+    """showfreqs averages over time itself; adding tmix on top would double it."""
+    assert "tmix" not in render.wave_mask(1920, 130, 48, 6, "spectrum")
+    assert "tmix" in render.wave_mask(1920, 130, 160, 6, "wave")
+
+
+def test_bar_slot_leaves_a_visible_gap():
+    m = render.wave_mask(1920, 130, 64, 3, "bars")
+    slot, keep = (int(x) for x in re.findall(r"mod\(X\\,(\d+)\)\\,(\d+)", m)[0])
+    assert 0 < keep < slot, "every slot must be part bar, part gap"
+    assert keep / slot == pytest.approx(1 - render.BAR_GAP, abs=0.06)
