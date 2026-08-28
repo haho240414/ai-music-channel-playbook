@@ -6,12 +6,15 @@ wrong fixture is a false positive we want to catch.
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import analyze  # noqa: E402
+import render  # noqa: E402
 from analyze import analyze_file, decode, loudness  # noqa: E402
 from export import export_playlist  # noqa: E402
 from score import pick_best_takes, score_cohort  # noqa: E402
@@ -259,3 +262,62 @@ def test_all_red_batch_still_produces_a_playlist(audio_dir, tmp_path):
     playlist = build_playlist(results)
     assert len(playlist) == 2
     assert all("position" in t for t in playlist)
+
+
+# --- Cover sampling against synthesized covers ---------------------------------
+
+
+def _cover(tmp_path, name, color, blob):
+    """A flat cover with one saturated blob, so the palette has something to find."""
+    out = str(tmp_path / name)
+    subprocess.run(
+        [analyze.FFMPEG, "-v", "error", "-f", "lavfi", "-i",
+         f"color=c={color}:s=640x360", "-f", "lavfi", "-i",
+         f"color=c={blob}:s=200x120",
+         "-filter_complex", "[0:v][1:v]overlay=60:200", "-frames:v", "1",
+         "-update", "1", "-y", out], stdin=subprocess.DEVNULL, check=True)
+    return out
+
+
+def test_ink_flips_to_light_on_a_dark_cover(tmp_path):
+    """The failure this prevents: on three night covers the sampled ink came out at
+    1.1:1 and 1.5:1 against the background -- a title that is not visible at all."""
+    dark = _cover(tmp_path, "dark.png", "0x101014", "0x30507a")
+    light = _cover(tmp_path, "light.png", "0xF2EFE6", "0xC07840")
+
+    lum = lambda h: render._srgb_lum(  # noqa: E731
+        (int(h[2:4], 16), int(h[4:6], 16), int(h[6:8], 16)))
+
+    def ink_against_background(cover):
+        paper, ink, _, _ = render.sample_colors(cover)
+        band = render._pixels(
+            cover, f"scale=1920:1080:force_original_aspect_ratio=decrease,"
+                   f"pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color={paper},"
+                   f"crop=1440:291:0:777,scale=40:12")
+        bg = tuple(sum(c[i] for c in band) // len(band) for i in range(3))
+        return lum(ink), render._srgb_lum(bg)
+
+    # The invariant is the direction, not an absolute lightness: force_contrast stops
+    # as soon as it reaches the target, so on a near-black cover a mid-tone already
+    # clears 7:1 and there is no reason to push it to white.
+    ink_d, bg_d = ink_against_background(dark)
+    ink_l, bg_l = ink_against_background(light)
+    assert ink_d > bg_d, "dark cover should get ink lighter than its background"
+    assert ink_l < bg_l, "light cover should get ink darker than its background"
+    assert ink_d > ink_l, "the two covers should not land on the same ink"
+
+
+def test_sampled_colours_clear_their_contrast_floors(tmp_path):
+    for bgc, blob in (("0x101014", "0x30507a"), ("0xF2EFE6", "0xC07840"),
+                      ("0x3A2E28", "0xF0B030")):
+        cov = _cover(tmp_path, f"c{bgc[-4:]}.png", bgc, blob)
+        paper, ink, wave, label = render.sample_colors(cov)
+        band = render._pixels(
+            cov, f"scale=1920:1080:force_original_aspect_ratio=decrease,"
+                 f"pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color={paper},"
+                 f"crop=1440:291:0:777,scale=40:12")
+        bg = tuple(sum(c[i] for c in band) // len(band) for i in range(3))
+        t = lambda h: (int(h[2:4], 16), int(h[4:6], 16), int(h[6:8], 16))  # noqa: E731
+        assert render.contrast(t(ink), bg) >= 7.0 - 1e-6
+        assert render.contrast(t(label), bg) >= 3.0 - 1e-6
+        assert render.contrast(t(wave), bg) >= 1.6 - 1e-6

@@ -41,12 +41,81 @@ color=c=<accent>:s=1920x130[wc];
 **Pad with the cover's own paper colour.** ffmpeg pads with black. A cream illustration
 that is not exactly 16:9 comes back framed in mourning bars.
 
-**Sample the overlay colours from the cover.** On the illustrated covers this playbook
+**Sample the overlay colours from the cover — and check them.** On the illustrated covers this playbook
 produces, the paper is usually the single largest colour in the frame — measured at 84%
 of one cover. White text on that is invisible, and a neon spectrum fights hand-drawn art.
-`render.py` quantises the cover, takes the most common cluster as paper, the darkest
-remaining cluster as ink, and the most saturated (weighted by area) as accent.
+Sampling alone guarantees nothing, though. See the next section.
 `--ink` / `--accent` / `--paper` override it.
+
+## A palette that only works on light covers is half a palette
+
+The first version assumed the artwork was light: it took the darkest cluster as ink and
+deepened it. Run across six covers — three watercolours on cream, three night
+photographs — the three dark ones came back at **1.1:1, 1.1:1 and 1.5:1**. Body text
+wants 4.5:1. The titles were not dim; they were not there.
+
+Three things fix it, and each is a measurement rather than a rule of thumb.
+
+**Decide polarity from where the text actually goes.** Not from the frame's dominant
+colour — that tells you what the picture is mostly made of, not what is behind the
+title. `sample_colors` averages the strip the text occupies and picks ink from the
+direction that can reach contrast there.
+
+**Then force the contrast.** A colour lifted out of the artwork keeps the palette honest
+and promises nothing, so ink is blended toward white or black until it clears its floor.
+Title 7:1, label 3:1.
+
+**Give the wave a different floor from the label.** They shared the accent at first, and
+holding the wave to a text threshold darkened a colour taken straight from the artwork —
+a validated `0xD09050` became `0xBB8248`. The wave is a graphic, not text: its floor
+(1.6) only rules out a wave nobody can see.
+
+| Cover | Ink | Title contrast |
+|---|---|---|
+| watercolour on cream | `0x59321E` | 10.3:1 |
+| night street | `0xF6F6E2` | 13.0:1 |
+| dusk bridge | `0xF6F6F6` | 12.1:1 |
+
+**On dark art the accent is the light in the picture.** Weighted by area, the biggest
+saturated cluster in a night photograph is a murky sky, and lifting that for contrast
+only greys it. Weighting brightness in and easing the area term off (exponent 0.15
+rather than 0.5) picks the streetlights instead — `0xF0B030` on the dusk cover.
+
+**A shadow, because an average is not a guarantee.** Contrast is measured against the
+mean of the title area, but a photograph is not uniform: a lit window directly behind
+the small label erases it while the average still passes. The shadow is drawn in the
+opposite polarity to the text and does not depend on the average.
+
+**Put the text on the calmer half.** On one cover the lower-left sat on a row of
+streetlights while the lower-right was open water that varied a third as much
+(σ 0.021 against 0.074). `pick_text_side` compares the two halves and takes the steadier
+one; ties keep the left, so a channel stays consistent between episodes.
+
+## Matching the wave to the channel
+
+`--wave-detail` and `--wave-smooth` are not taste settings. Crisp detail earns its place
+only when the frame-to-frame change is music rather than noise, and that is exactly what
+the screener already measures per track as **pulse clarity**. Across six channels it
+ranged from 0.375 to 0.711 — nearly a factor of two.
+
+So both settings are derived from the median pulse clarity of the episode, anchored on
+the one combination checked frame by frame (0.377 → detail 160, smooth 6):
+
+```
+detail = clamp(160 × pulse / 0.377, 120, 480)
+smooth = clamp(6 × 0.377 / pulse,     3,  10)
+```
+
+| Channel type | Pulse | Detail | Smooth |
+|---|---|---|---|
+| loose, ambient | 0.375 | 159 | 6 |
+| mid | 0.403 | 171 | 6 |
+| steady beat | 0.531 | 225 | 4 |
+| strong beat | 0.711 | 302 | 3 |
+
+Music with a strong pulse can carry an articulate wave, because what the wave shows is
+the beat. Loose, ambient material cannot: drawn sharply it shows noise, so it gets fewer
+columns and more averaging.
 
 ## Waveform gain
 

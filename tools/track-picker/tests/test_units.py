@@ -898,3 +898,45 @@ def test_title_never_collides_with_the_wave_band(h):
     assert geo["title_bottom"] < geo["wave_top"], (
         f"title reaches {geo['title_bottom']}, wave box starts {geo['wave_top']}")
     assert geo["wave_bottom"] <= h
+
+
+# --- Overlay colours have to survive the cover they sit on ----------------------
+
+
+def test_contrast_is_symmetric_and_bounded():
+    assert render.contrast((0, 0, 0), (255, 255, 255)) == pytest.approx(21.0, abs=0.01)
+    assert render.contrast((255, 255, 255), (0, 0, 0)) == pytest.approx(21.0, abs=0.01)
+    assert render.contrast((128, 128, 128), (128, 128, 128)) == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("bg", [(10, 10, 12), (250, 247, 240), (58, 46, 40)])
+def test_force_contrast_reaches_the_target(bg):
+    """Sampling a colour out of the artwork guarantees nothing. On a night photograph
+    the darkest cluster measured 1.1:1 against a near-black background -- text that is
+    simply not there."""
+    for fg in [(9, 29, 29), (112, 80, 72), (240, 176, 48)]:
+        out = render.force_contrast(fg, bg, 4.5)
+        assert render.contrast(out, bg) >= 4.5 - 1e-9
+
+
+def test_force_contrast_moves_toward_white_on_dark_backgrounds():
+    dark = (12, 12, 14)
+    out = render.force_contrast((40, 60, 60), dark, 7.0)
+    assert render._srgb_lum(out) > render._srgb_lum((40, 60, 60))
+    light = (250, 248, 242)
+    out = render.force_contrast((160, 140, 130), light, 7.0)
+    assert render._srgb_lum(out) < render._srgb_lum((160, 140, 130))
+
+
+def test_shadow_polarity_opposes_the_text():
+    assert render.shadow_for("0xF6F6F6").startswith("black")
+    assert render.shadow_for("0x59321E").startswith("white")
+
+
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_layout_x_is_an_expression_for_the_right_side(side):
+    geo = render.layout(1920, 1080, 54, 129, side)
+    if side == "left":
+        assert geo["x"] == str(int(1920 * 0.068))
+    else:
+        assert geo["x"].startswith("w-tw-")
