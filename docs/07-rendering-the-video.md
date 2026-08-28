@@ -64,6 +64,31 @@ the audio that is muxed.
 which is correct and not a defect: track boundaries land in near-silence, so the wave
 naturally rests exactly when the title changes.
 
+## The waveform is 78% of the file
+
+Measured on the same 60-second window, `veryfast`, CRF 20:
+
+| Render | Bitrate |
+|---|---|
+| Cover + titles + wave | 2.67 Mbps |
+| Cover + wave, no titles | 2.66 Mbps |
+| Cover + titles, no wave | 0.58 Mbps |
+
+The titles cost nothing — they change 20 times in an hour. The wave is redrawn every
+frame from a different 40 ms window, so consecutive frames are uncorrelated and the codec
+has nothing to predict from. That is the worst case for inter-frame compression.
+
+Drawing the wave narrow and scaling it up cuts both the bitrate and the crispness:
+
+| `--wave-detail` | Bitrate | Look |
+|---|---|---|
+| 1920 | 2.67 Mbps | crisp — an instrument readout |
+| 480 | 1.87 Mbps | soft-edged, brushstroke-like |
+| 240 | 1.65 Mbps | smeared, loses definition |
+
+`WAVE_DETAIL = 480` is the default: on illustrated covers the softer wave suits the
+artwork better than the sharp one, and it happens to be 30% smaller.
+
 ## The title must clear the wave box
 
 The wave fills its **whole box** at full amplitude, so the box top, not the resting line
@@ -86,6 +111,10 @@ at 720p through 4K, because both values scale and the collision returns silently
 The audio is concatenated with `-c copy`, so the timestamps computed at export time land
 exactly: verified against a rendered episode, the audio inside the MP4 matched the source
 at correlation 1.0000 at the first, middle and last chapter.
+
+The joined intermediate is deleted after a successful render — an hour of wav export is
+about 640 MB, and re-joining it with `-c copy` takes under a second. `--keep-audio` keeps
+it.
 
 One catch: `--export-format wav` writes PCM, which has no tag in an MP4 container.
 Concatenating a wav export into `.m4a` fails outright with *"Could not find tag for codec

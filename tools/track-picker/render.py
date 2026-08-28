@@ -53,6 +53,7 @@ LABEL_FONTS = [
 
 FADE = 0.9          # seconds of cross-fade on the title at each track change
 WAVE_GAIN = 3.0     # visual only: lifts the wave so quiet passages still move
+WAVE_DETAIL = 480   # px the wave is drawn at before being scaled up; see docs/07
 
 
 def layout(width: int, height: int, title_size: int, wave_h: int) -> dict:
@@ -219,7 +220,8 @@ def title_filters(items, width, height, ink, accent, title_font, label_font,
 
 def build_filtergraph(cover, items, width, height, paper, ink, accent,
                       title_font, label_font, title_size, label_size,
-                      wave_h, wave_alpha, is_video, offset: float = 0.0) -> str:
+                      wave_h, wave_alpha, is_video, offset: float = 0.0,
+                      detail: int = WAVE_DETAIL) -> str:
     scale = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
              f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color={paper},setsar=1")
     wave_y = height - wave_h - int(height * 0.019)
@@ -227,8 +229,11 @@ def build_filtergraph(cover, items, width, height, paper, ink, accent,
         f"[0:v]{scale}[bg]",
         # White wave -> luminance mask -> tint. Overlaying showwaves directly would
         # paint its opaque black background across the cover.
-        f"[1:a]volume={WAVE_GAIN},showwaves=s={width}x{wave_h}:mode=cline"
-        f":colors=white:rate=25,format=gray[wm]",
+        # Drawn narrow and scaled up. At full width the wave is a crisp instrument
+        # readout that costs 78% of the file; softened it reads as a brushstroke and
+        # compresses far better. See docs/07 for the measurements.
+        f"[1:a]volume={WAVE_GAIN},showwaves=s={detail}x{wave_h}:mode=cline"
+        f":colors=white:rate=25,format=gray,scale={width}:{wave_h}:flags=bicubic[wm]",
         f"color=c={accent}:s={width}x{wave_h}:r=25[wc]",
         f"[wc][wm]alphamerge,colorchannelmixer=aa={wave_alpha}[wave]",
         f"[bg][wave]overlay=0:{wave_y}:shortest={1 if is_video else 0}[v0]",
@@ -269,8 +274,14 @@ def main():
     ap.add_argument("--label-size", type=int, default=0)
     ap.add_argument("--wave-height", type=int, default=0)
     ap.add_argument("--wave-alpha", type=float, default=0.75)
+    ap.add_argument("--wave-detail", type=int, default=WAVE_DETAIL,
+                    help="px the wave is drawn at before scaling up; lower is softer "
+                         "and smaller (480 default, 1920 = crisp instrument readout)")
     ap.add_argument("--no-wave", action="store_true")
     ap.add_argument("--no-titles", action="store_true")
+    ap.add_argument("--keep-audio", action="store_true",
+                    help="keep the concatenated intermediate (a wav export of an hour "
+                         "is ~640 MB; re-joining it costs under a second)")
     ap.add_argument("--preview", type=float, default=0,
                     help="render only N seconds, starting at --preview-at")
     ap.add_argument("--preview-at", type=float, default=0)
@@ -304,13 +315,13 @@ def main():
     graph = build_filtergraph(args.cover, items, args.width, args.height,
                               paper, ink, accent, title_font, label_font,
                               title_size, label_size, wave_h, args.wave_alpha,
-                              is_video, args.preview_at)
+                              is_video, args.preview_at, args.wave_detail)
     if args.no_wave or args.no_titles:
         graph = build_filtergraph(args.cover, [] if args.no_titles else items,
                                   args.width, args.height, paper, ink, accent,
                                   title_font, label_font, title_size, label_size,
                                   wave_h, 0.0 if args.no_wave else args.wave_alpha,
-                                  is_video, args.preview_at)
+                                  is_video, args.preview_at, args.wave_detail)
 
     video = os.path.join(args.out, f"{args.name}.mp4")
     cmd = [FFMPEG, "-y", "-v", "error"]
@@ -335,6 +346,11 @@ def main():
     with open(desc, "w", encoding="utf-8") as f:
         f.write("\n".join(chapter_lines(items)) + "\n")
     size = os.path.getsize(video) / 1048576
+    if not args.keep_audio and not args.preview:
+        try:
+            os.remove(audio)
+        except OSError:
+            pass
     print(f"[4/4] done -> {video}  ({size:.1f} MB)")
     print(f"       {desc}  (paste into the upload form)")
 

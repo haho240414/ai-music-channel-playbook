@@ -178,3 +178,12 @@ def test_rendering_doc_is_linked_from_the_entry_points():
     """A doc nothing points at is a doc no agent will read."""
     assert "docs/07-rendering-the-video.md" in read("README.md")
     assert "docs/07-rendering-the-video.md" in read("AGENTS.md")
+
+
+def test_wave_detail_matches_the_doc():
+    """The bitrate table is measured at a specific detail width; if the default moves
+    and the table does not, the table describes a render nobody produces."""
+    doc = read("docs", "07-rendering-the-video.md")
+    m = re.search(r"`WAVE_DETAIL = (\d+)`", doc)
+    assert m, "docs/07 no longer states WAVE_DETAIL"
+    assert int(m.group(1)) == render.WAVE_DETAIL
