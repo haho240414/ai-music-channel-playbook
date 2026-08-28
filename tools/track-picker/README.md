@@ -11,7 +11,8 @@ Background and rationale: [quality screening](../../docs/03-quality-screening.md
 
 - Python 3.9+
 - `numpy`
-- `ffmpeg` on PATH (or set `FFMPEG_BIN=/path/to/ffmpeg`)
+- `ffmpeg` on PATH (or set `FFMPEG_BIN=/path/to/ffmpeg`) — checked at startup, so a
+  missing one stops the run with instructions rather than failing per file
 
 ```bash
 pip install numpy

@@ -34,13 +34,34 @@ FFMPEG = _find_ffmpeg()
 SR = 22050
 
 
+class FFmpegMissing(RuntimeError):
+    """The ffmpeg binary itself is unavailable.
+
+    Kept distinct from a decode failure: "this file is broken" and "I have no decoder"
+    look identical at the call site, and treating the second as the first once deleted
+    every downloaded file in a batch.
+    """
+
+
+def ffmpeg_available() -> bool:
+    try:
+        subprocess.run([FFMPEG, "-version"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        return True
+    except (OSError, subprocess.CalledProcessError):
+        return False
+
+
 # ---------------------------------------------------------------- decoding
 
 
 def decode(path: str, sr: int = SR):
     """m4a/mp3/wav -> float64 (L, R, mono)."""
     cmd = [FFMPEG, "-v", "error", "-i", path, "-f", "f32le", "-ac", "2", "-ar", str(sr), "-"]
-    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as exc:
+        raise FFmpegMissing(f"cannot run ffmpeg ({FFMPEG}): {exc}") from exc
     if p.returncode != 0:
         raise RuntimeError(f"ffmpeg decode failed: {p.stderr.decode(errors='ignore')[:300]}")
     x = np.frombuffer(p.stdout, dtype=np.float32).reshape(-1, 2).astype(np.float64)

@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from analyze import analyze_file          # noqa: E402
+from analyze import FFMPEG, FFmpegMissing, analyze_file, ffmpeg_available  # noqa: E402
 from export import export_playlist, timestamp_lines  # noqa: E402
 from score import (WEIGHTS, discrimination, normalize_title,  # noqa: E402
                    pick_best_takes, score_cohort)
@@ -329,6 +329,15 @@ def main():
                     help='warn when a track\'s tags omit "instrumental"')
     args = ap.parse_args()
 
+    # Check the decoder once, before touching anything. Without this the tool emits one
+    # cryptic error per file, writes an empty report, and exits 0 -- and in --urls mode
+    # the corrupt-download self-heal deleted every file it had just fetched.
+    if not ffmpeg_available():
+        raise SystemExit(
+            f"ffmpeg is required but could not be run (tried: {FFMPEG}).\n"
+            f"Install it (macOS: brew install ffmpeg, Debian/Ubuntu: apt install ffmpeg)\n"
+            f"or point FFMPEG_BIN at the binary.")
+
     narrative = None
     if args.narrative:
         with open(args.narrative, encoding="utf-8") as f:
@@ -374,8 +383,10 @@ def main():
         if err is not None:
             print(f"  {i}/{len(jobs)} {os.path.basename(j['path'])} -> failed: {err}")
             # Self-heal a corrupt download so the next run refetches it. Only ever
-            # touch files this tool fetched -- never one the user pointed us at.
-            if j.get("downloaded") and os.path.exists(j["path"]):
+            # touch files this tool fetched -- never one the user pointed us at -- and
+            # never when the decoder is what is missing, since the file is then fine.
+            if (not isinstance(err, FFmpegMissing)
+                    and j.get("downloaded") and os.path.exists(j["path"])):
                 os.remove(j["path"])
                 print("      removed the unreadable download; it will be refetched")
             continue
@@ -413,6 +424,10 @@ def main():
                     "detail": "no tag string captured, so vocals could not be ruled out"})
                 if r["tier"] == "GREEN":
                     r["tier"] = "YELLOW"
+
+    if not results:
+        raise SystemExit(
+            f"none of the {len(jobs)} file(s) could be analyzed -- see the errors above")
 
     print("[3/5] cohort scoring")
     score_cohort(results)

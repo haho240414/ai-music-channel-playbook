@@ -394,6 +394,41 @@ def test_report_icon_lookup_is_total():
     assert '}.get(d["verdict"]' in src, "icon lookup must use .get with a default"
 
 
+# ---------------------------------------------------------------- missing decoder
+
+
+def test_missing_ffmpeg_is_a_distinct_exception(tmp_path, monkeypatch):
+    """"This file is broken" and "I have no decoder" look identical at the call site.
+    Conflating them made the corrupt-download self-heal delete every file in a batch."""
+    import analyze
+
+    f = tmp_path / "a.m4a"
+    f.write_bytes(b"not audio")
+    monkeypatch.setattr(analyze, "FFMPEG", "/nonexistent/ffmpeg")
+    with pytest.raises(analyze.FFmpegMissing):
+        analyze.decode(str(f))
+    assert f.exists(), "a missing decoder must never be treated as a bad file"
+
+
+def test_ffmpeg_available_reports_absence(monkeypatch):
+    import analyze
+    monkeypatch.setattr(analyze, "FFMPEG", "/nonexistent/ffmpeg")
+    assert analyze.ffmpeg_available() is False
+
+
+def test_decode_failure_is_not_ffmpeg_missing(tmp_path):
+    """A genuinely unreadable file must still raise the ordinary error, so the
+    self-heal keeps working for the case it was written for."""
+    import analyze
+    if not analyze.ffmpeg_available():
+        pytest.skip("ffmpeg not available")
+    f = tmp_path / "broken.m4a"
+    f.write_bytes(b"\x00" * 50000)
+    with pytest.raises(Exception) as excinfo:
+        analyze.decode(str(f))
+    assert not isinstance(excinfo.value, analyze.FFmpegMissing)
+
+
 # ---------------------------------------------------------------- download safety
 
 

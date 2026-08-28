@@ -253,6 +253,21 @@ Two things that break a naive version of this:
 - **Labels change under you.** A play button's label becomes "Pause" while playing. Capture
   every track's title when you enumerate the buttons, not inside the loop.
 
+**Never let an environment failure look like a data failure.** The self-heal above
+deletes a downloaded file that will not decode. But "this file is broken" and "I have no
+decoder" arrive as the same error at the call site — so with ffmpeg missing, the tool
+deleted every file it had just fetched (measured: 7 of 7, 20 MB) while printing one
+cryptic line per file, writing an empty report, and exiting 0. A wrapper script would
+have called that a success.
+
+Three guards, because one is not enough:
+
+1. Check the decoder once at startup and stop with an actionable message before touching
+   anything.
+2. Raise a distinct exception when the binary itself cannot run, and never self-heal on
+   it — only on a real decode failure.
+3. Exit non-zero when nothing could be analyzed, instead of reporting "done".
+
 **One dead link must not lose the batch.** Generator URLs expire, and mapping a fetch
 function over a thread pool propagates the first exception out of the whole run —
 measured, a single 404 aborted everything with a bare traceback, discarding the 6 of 7
