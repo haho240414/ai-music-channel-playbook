@@ -106,6 +106,13 @@ pip install pytest numpy
 python3 -m pytest tests/ -q
 ```
 
+`tests/test_docs.py` needs no audio either. It enforces the cross-file invariants that
+were previously held by hand: the scoring table in the docs against `WEIGHTS`, the
+sequencing constants against the prose that quotes them, and the worked example against
+itself (brief tracklist ↔ narrative JSON ↔ per-track prompts, matching titles, BPM and
+keys). Hand-maintenance already failed once here, leaving a hardcoded `22` in the
+sequencer after the hook weight changed to 24.
+
 `tests/test_units.py` needs no audio and covers the logic that was hardest to get right:
 metrical folding, the loudness plan, take grouping, and sequencing at 12/15/20-track
 scale. `tests/test_audio.py` synthesizes fixtures with ffmpeg — one per condition — and
