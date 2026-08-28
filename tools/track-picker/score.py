@@ -222,10 +222,15 @@ def discrimination(results: list[dict]) -> list[dict]:
 
 
 def pick_best_takes(results: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Of several takes sharing a title, keep only the highest scoring one."""
+    """Of several takes sharing a title, keep only the highest scoring one.
+
+    A caller can set `group_key` to say what "the same track" means. Filenames carry a
+    leading index that identifies the track, so `01_Untitled` and `02_Untitled` are two
+    tracks rather than two takes -- merging them silently discards one.
+    """
     by_title: dict[str, list[dict]] = {}
     for r in results:
-        key = normalize_title(r.get("title") or r["file"])
+        key = r.get("group_key") or normalize_title(r.get("title") or r["file"])
         by_title.setdefault(key, []).append(r)
 
     kept, dropped = [], []

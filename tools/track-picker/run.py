@@ -99,6 +99,38 @@ def download(urls_json: str, audio_dir: str) -> list[dict]:
     return ok, failed
 
 
+def _leading_index(name: str) -> str:
+    m = re.match(r"^(\d+)[_-]", os.path.splitext(name)[0])
+    return m.group(1) if m else ""
+
+
+def _has_take_marker(name: str) -> bool:
+    """Does the filename explicitly say which take this is?"""
+    stem = os.path.splitext(name)[0].replace("_", " ")
+    return normalize_title(stem) != stem.strip()
+
+
+def group_keys_for(names: list[str]) -> dict[str, str]:
+    """Decide what counts as "the same track" for a folder of files.
+
+    Two signals, and they can disagree:
+
+    - An explicit take marker (`_take2`, `_Take_2`, `_v2`) is strong evidence, and it
+      outranks the index: real output contains `06_Alleyway_Weather` alongside
+      `07_Alleyway_Weather_Take_2`, which are one track under two numbers.
+    - Otherwise the leading index identifies the track, so `01_Untitled` and
+      `02_Untitled` are two tracks. Grouping those merges them and silently drops one.
+
+    So: if any file sharing a title carries an explicit marker, group that title by
+    title alone; otherwise keep the index in the key.
+    """
+    titled = {n: filename_to_title(n).lower() for n in names}
+    marked = {titled[n] for n in names if _has_take_marker(n)}
+    return {n: titled[n] if titled[n] in marked
+            else f"{_leading_index(n)}|{titled[n]}"
+            for n in names}
+
+
 def filename_to_title(name: str) -> str:
     """Recover a track title from a filename.
 
@@ -112,12 +144,13 @@ def filename_to_title(name: str) -> str:
 
 
 def collect_from_dir(audio_dir: str) -> list[dict]:
-    jobs = []
-    for name in sorted(os.listdir(audio_dir)):
-        if name.lower().endswith(AUDIO_EXT):
-            jobs.append({"path": os.path.join(audio_dir, name),
-                         "title": filename_to_title(name), "target_bpm": None})
-    return jobs
+    names = [n for n in sorted(os.listdir(audio_dir))
+             if n.lower().endswith(AUDIO_EXT)]
+    keys = group_keys_for(names)
+    return [{"path": os.path.join(audio_dir, n),
+             "title": filename_to_title(n),
+             "group_key": keys[n],
+             "target_bpm": None} for n in names]
 
 
 TIER_ICON = {"GREEN": "🟢", "YELLOW": "🟡", "RED": "🔴"}
@@ -327,6 +360,8 @@ def main():
             r = analyze_file(job["path"], target_bpm=job.get("target_bpm"))
             r["title"] = job.get("title")
             r["tags"] = job.get("tags")
+            if job.get("group_key"):
+                r["group_key"] = job["group_key"]
             return job, r, None
         except Exception as exc:  # noqa: BLE001
             return job, None, exc

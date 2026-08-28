@@ -291,6 +291,37 @@ def test_filename_to_title(filename, expected):
     assert run.filename_to_title(filename) == expected
 
 
+@pytest.mark.parametrize("names, expected_groups", [
+    # An explicit take marker outranks the index -- real output pairs
+    # "06_Alleyway_Weather" with "07_Alleyway_Weather_Take_2".
+    (["06_Alleyway_Weather.m4a", "07_Alleyway_Weather_Take_2.m4a"], 1),
+    (["17_Ticket_take1.m4a", "17_Ticket_take2.m4a"], 1),
+    # With no marker anywhere, the leading index identifies the track. Merging these
+    # would drop two of the three as losing takes.
+    (["01_Untitled.m4a", "02_Untitled.m4a", "03_Untitled.m4a"], 3),
+    (["01_Movement_1.m4a", "02_Movement_2.m4a", "03_Movement_3.m4a"], 3),
+])
+def test_group_keys_balance_index_against_take_markers(names, expected_groups):
+    import run
+    assert len(set(run.group_keys_for(names).values())) == expected_groups
+
+
+def test_same_name_different_index_survives_take_selection(tmp_path):
+    """Six identically named files under different indices are six tracks, not one
+    track with five discarded takes."""
+    import run
+    for i in range(1, 7):
+        (tmp_path / f"0{i}_Untitled.wav").write_bytes(b"")
+    jobs = run.collect_from_dir(str(tmp_path))
+    tracks = []
+    for j in jobs:
+        t = make_track(j["title"])
+        t["group_key"] = j["group_key"]
+        tracks.append(t)
+    kept, dropped = pick_best_takes(tracks)
+    assert len(kept) == 6 and dropped == []
+
+
 def test_numbered_movements_stay_separate_tracks(tmp_path):
     """End-to-end guard on the data-loss case: three movements must not become one
     track with two takes discarded."""

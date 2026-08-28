@@ -15,6 +15,15 @@ Two cautions, both observed in real output:
 Without normalizing both, two takes of one track become two tracks and both end up in the
 episode.
 
+**The leading index counts too, but an explicit marker outranks it.** Two signals decide
+whether two files are one track, and they can disagree. A file carrying `_take2` or `_v2`
+is a take whatever its number — real output pairs `06_Alleyway_Weather` with
+`07_Alleyway_Weather_Take_2`. With no marker anywhere, the number is the identity:
+`01_Untitled` and `02_Untitled` are two tracks, and merging them discards one as a losing
+take. So group by title when any file sharing that title carries a marker, and by
+index-plus-title otherwise. Verified both ways on a real 30-file batch: filename mode and
+metadata mode agree on the same 14 tracks.
+
 Do **not** treat a bare trailing letter or digit as a take marker. It is ambiguous, and
 guessing wrong loses tracks silently: stripping `_1`/`_2`/`_3` collapsed `Movement 1`,
 `Movement 2` and `Movement 3` into a single track and discarded two of them as losing
