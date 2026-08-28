@@ -34,6 +34,7 @@ Do not read everything. Load what the task needs.
 | 4 | `docs/02-thumbnail-prompting.md`, `templates/character-bible.md`, `examples/03-` and `04-` |
 | 5 | `docs/03-quality-screening.md`, `docs/04-playlist-sequencing.md`, `tools/track-picker/README.md` |
 | Driving a generator | `docs/05-running-the-generator.md`, `docs/06-browser-automation.md` |
+| Rendering the video | `docs/07-rendering-the-video.md` |
 
 `examples/` is a complete filled-in episode. When the user is unsure how specific to be,
 show them the relevant part of it rather than explaining.

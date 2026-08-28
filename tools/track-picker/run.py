@@ -100,7 +100,7 @@ def download(urls_json: str, audio_dir: str) -> list[dict]:
 
 
 def _leading_index(name: str) -> str:
-    m = re.match(r"^(\d+)[_-]", os.path.splitext(name)[0])
+    m = re.match(r"^(\d+)\s*[_-]\s*", os.path.splitext(name)[0])
     return m.group(1) if m else ""
 
 
@@ -139,7 +139,7 @@ def filename_to_title(name: str) -> str:
     deliberately left alone: treating it as a take marker collapsed "Movement 1/2/3"
     into a single track and silently dropped two of them from the episode.
     """
-    title = re.sub(r"^\d+[_-]", "", os.path.splitext(name)[0])
+    title = re.sub(r"^\d+\s*[_-]\s*", "", os.path.splitext(name)[0])
     return normalize_title(title.replace("_", " ").strip())
 
 

@@ -241,7 +241,11 @@ def pick_best_takes(results: list[dict]) -> tuple[list[dict], list[dict]]:
         # "... (Take 2)", and that suffix would otherwise reach the tracklist,
         # the exported filename, and the published chapter timestamps.
         winner["raw_title"] = winner.get("title")
-        winner["title"] = title
+        # Use the winner's own title, not `title` -- that is the grouping KEY, which is
+        # deliberately lowercased and may carry an index prefix ("14|paper lantern").
+        # Publishing the key put internal syntax into the report, the exported
+        # filenames and the chapter timestamps.
+        winner["title"] = normalize_title(winner.get("title") or winner["file"])
         kept.append(winner)
         for t in takes[1:]:
             t["dropped_reason"] = f"lower-scoring take of the same title (kept: {winner['file']})"

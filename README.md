@@ -18,6 +18,7 @@ at a time and hitting the failure modes that only show up at that volume.
 | [Playlist sequencing](docs/04-playlist-sequencing.md) | Picking track 1, ordering the rest, and why loudness normalization goes *down* |
 | [Running the generator](docs/05-running-the-generator.md) | The submission loop — session rotation, confirming a send actually registered, recording renames |
 | [Browser automation](docs/06-browser-automation.md) | How to drive it automatically — locating elements, verifying cheaply, the stale-element fallback |
+| [Rendering the video](docs/07-rendering-the-video.md) | Cover, track titles that cross-fade, an audio-reactive waveform — and the traps in each |
 
 Blank templates are in [`templates/`](templates/), and [`examples/`](examples/) has all of
 them filled in for one complete episode. A working implementation of the screening and

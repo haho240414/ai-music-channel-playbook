@@ -23,6 +23,7 @@ sys.path.insert(0, TOOL)
 
 import analyze  # noqa: E402
 import export  # noqa: E402
+import render  # noqa: E402
 import sequence  # noqa: E402
 from score import WEIGHTS  # noqa: E402
 
@@ -149,3 +150,31 @@ def test_example_readme_track_count_is_right():
     n = len(_example_tracks())
     assert f"{n} tracks" in readme or f"{n}-track" in readme or f"**{n}" in readme, \
         f"examples/README does not state the actual track count ({n})"
+
+
+# ------------------------------------------------------- rendering doc vs code
+
+
+def test_wave_gain_matches_the_doc():
+    """The gain table in the rendering doc reports measured wave heights. If the code's
+    gain changes and the table does not, the measurements describe a different render."""
+    doc = read("docs", "07-rendering-the-video.md")
+    m = re.search(r"`WAVE_GAIN = ([\d.]+)`", doc)
+    assert m, "docs/07 no longer states WAVE_GAIN"
+    assert float(m.group(1)) == render.WAVE_GAIN
+
+
+def test_documented_layout_rows_match_the_geometry():
+    """The doc quotes the measured row ranges that prove the title clears the wave box.
+    Those come from height-derived constants, so a layout change invalidates them."""
+    doc = read("docs", "07-rendering-the-video.md")
+    m = re.search(r"\|\s*Wave box\s*\|\s*(\d+)[-–](\d+)\s*\|", doc)
+    assert m, "docs/07 no longer tabulates the wave box rows"
+    geo = render.layout(1920, 1080, max(int(1080 * 0.050), 12), int(1080 * 0.120))
+    assert (int(m.group(1)), int(m.group(2))) == (geo["wave_top"], geo["wave_bottom"])
+
+
+def test_rendering_doc_is_linked_from_the_entry_points():
+    """A doc nothing points at is a doc no agent will read."""
+    assert "docs/07-rendering-the-video.md" in read("README.md")
+    assert "docs/07-rendering-the-video.md" in read("AGENTS.md")

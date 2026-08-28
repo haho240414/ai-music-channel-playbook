@@ -16,6 +16,8 @@ from analyze import fold_to_range, metrical_fold  # noqa: E402
 from export import plan_gains, timestamp_lines  # noqa: E402
 from score import normalize_title, pick_best_takes, score_cohort  # noqa: E402
 from sequence import build_playlist, camelot_distance  # noqa: E402
+from run import _leading_index, filename_to_title  # noqa: E402
+import render  # noqa: E402
 
 from conftest import make_track  # noqa: E402
 
@@ -288,7 +290,7 @@ def test_score_cohort_single_track_scores():
 ])
 def test_filename_to_title(filename, expected):
     import run
-    assert run.filename_to_title(filename) == expected
+    assert filename_to_title(filename) == expected
 
 
 @pytest.mark.parametrize("names, expected_groups", [
@@ -830,3 +832,69 @@ def test_timestamps_cross_the_hour():
     rows = [{"title": f"T{i}", "duration_s": 700.0} for i in range(7)]
     lines, _ = timestamp_lines(rows)
     assert lines[6].startswith("1:10:00 ")
+
+
+# --- Titles published to the report, filenames and chapter timestamps -----------
+
+
+def test_spaced_index_is_stripped_from_title():
+    """Real folders name files "14 - Paper Lantern.wav". Requiring the separator to
+    touch the digits left the index inside the title, so the on-screen track name
+    said 14 while the track played at position 1."""
+    assert filename_to_title("14 - Paper Lantern.wav") == "Paper Lantern"
+    assert filename_to_title("01 - Harbour Kite II.wav") == "Harbour Kite II"
+    assert _leading_index("14 - Paper Lantern.wav") == "14"
+
+
+def test_numeric_title_without_separator_survives():
+    """The separator is what makes a leading number an index. Without one it is part
+    of the title and must not be eaten."""
+    assert filename_to_title("1984 Nights.wav") == "1984 Nights"
+    assert _leading_index("1984 Nights.wav") == ""
+
+
+def test_published_title_is_not_the_grouping_key():
+    """`group_key` is an internal identifier: lowercased, index-prefixed, pipe-joined.
+    Publishing it put "|14 - paper lantern" into the report and the exported filenames."""
+    results = [{"file": "a.wav", "title": "Paper Lantern",
+                "group_key": "14|paper lantern", "score": 9.0, "tier": "GREEN"}]
+    kept, _ = pick_best_takes(results)
+    assert kept[0]["title"] == "Paper Lantern"
+    assert "|" not in kept[0]["title"]
+
+
+def test_take_suffix_still_stripped_from_published_title():
+    """The reason the key was published in the first place: the winning take may be
+    the one labelled "(Take 2)", and that must not reach the tracklist."""
+    results = [
+        {"file": "a.wav", "title": "Salt Air", "group_key": "salt air",
+         "score": 5.0, "tier": "GREEN"},
+        {"file": "b.wav", "title": "Salt Air (Take 2)", "group_key": "salt air",
+         "score": 9.0, "tier": "GREEN"},
+    ]
+    kept, dropped = pick_best_takes(results)
+    assert len(kept) == 1 and len(dropped) == 1
+    assert kept[0]["file"] == "b.wav"        # the higher-scoring take won
+    assert kept[0]["title"] == "Salt Air"    # but published without the marker
+
+
+def test_concat_container_follows_the_source_format():
+    """PCM has no tag in an MP4 container: concatenating a wav export into .m4a fails
+    with "Could not find tag for codec pcm_s16le" and no video is produced."""
+    assert render.concat_container(["a/01.wav", "a/02.wav"], "/o/ep") == "/o/ep.wav"
+    assert render.concat_container(["a/01.m4a", "a/02.m4a"], "/o/ep") == "/o/ep.m4a"
+    assert render.concat_container(["a/01.flac"], "/o/ep") == "/o/ep.flac"
+    # Mixed inputs cannot all be copied into either one, so use a permissive container.
+    assert render.concat_container(["a/01.wav", "a/02.m4a"], "/o/ep") == "/o/ep.mkv"
+
+
+@pytest.mark.parametrize("h", [720, 1080, 1440, 2160])
+def test_title_never_collides_with_the_wave_band(h):
+    """Measured on a rendered frame the title occupied rows 780-862 and the wave box
+    began at 931. Both are derived from the height, so a resolution or font-size change
+    can silently close that gap and strike the title through at loud moments."""
+    w, title_size, wave_h = int(h * 16 / 9), max(int(h * 0.050), 12), int(h * 0.120)
+    geo = render.layout(w, h, title_size, wave_h)
+    assert geo["title_bottom"] < geo["wave_top"], (
+        f"title reaches {geo['title_bottom']}, wave box starts {geo['wave_top']}")
+    assert geo["wave_bottom"] <= h
