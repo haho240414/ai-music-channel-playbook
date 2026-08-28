@@ -187,3 +187,11 @@ def test_wave_detail_matches_the_doc():
     m = re.search(r"`WAVE_DETAIL = (\d+)`", doc)
     assert m, "docs/07 no longer states WAVE_DETAIL"
     assert int(m.group(1)) == render.WAVE_DETAIL
+
+
+def test_wave_smooth_matches_the_doc():
+    """The jitter table is measured at a specific frame count."""
+    doc = read("docs", "07-rendering-the-video.md")
+    m = re.search(r"`WAVE_SMOOTH = (\d+)`", doc)
+    assert m, "docs/07 no longer states WAVE_SMOOTH"
+    assert int(m.group(1)) == render.WAVE_SMOOTH

@@ -52,8 +52,9 @@ LABEL_FONTS = [
 ] + TITLE_FONTS
 
 FADE = 0.9          # seconds of cross-fade on the title at each track change
-WAVE_GAIN = 3.0     # visual only: lifts the wave so quiet passages still move
-WAVE_DETAIL = 480   # px the wave is drawn at before being scaled up; see docs/07
+WAVE_GAIN = 3.5     # visual only: lifts the wave so quiet passages still move
+WAVE_DETAIL = 160   # px the wave is drawn at before being scaled up; see docs/07
+WAVE_SMOOTH = 6     # frames averaged together to settle the wave; see docs/07
 
 
 def layout(width: int, height: int, title_size: int, wave_h: int) -> dict:
@@ -221,7 +222,7 @@ def title_filters(items, width, height, ink, accent, title_font, label_font,
 def build_filtergraph(cover, items, width, height, paper, ink, accent,
                       title_font, label_font, title_size, label_size,
                       wave_h, wave_alpha, is_video, offset: float = 0.0,
-                      detail: int = WAVE_DETAIL) -> str:
+                      detail: int = WAVE_DETAIL, smooth: int = WAVE_SMOOTH) -> str:
     scale = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
              f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color={paper},setsar=1")
     wave_y = height - wave_h - int(height * 0.019)
@@ -229,11 +230,13 @@ def build_filtergraph(cover, items, width, height, paper, ink, accent,
         f"[0:v]{scale}[bg]",
         # White wave -> luminance mask -> tint. Overlaying showwaves directly would
         # paint its opaque black background across the cover.
-        # Drawn narrow and scaled up. At full width the wave is a crisp instrument
-        # readout that costs 78% of the file; softened it reads as a brushstroke and
-        # compresses far better. See docs/07 for the measurements.
+        # Drawn narrow, averaged over several frames, then scaled up. At full width and
+        # one frame the wave is a crisp instrument readout: it costs 78% of the file and
+        # half its motion is per-frame noise rather than music. See docs/07.
         f"[1:a]volume={WAVE_GAIN},showwaves=s={detail}x{wave_h}:mode=cline"
-        f":colors=white:rate=25,format=gray,scale={width}:{wave_h}:flags=bicubic[wm]",
+        f":colors=white:rate=25,format=gray"
+        + (f",tmix=frames={smooth}" if smooth > 1 else "")
+        + f",scale={width}:{wave_h}:flags=bicubic[wm]",
         f"color=c={accent}:s={width}x{wave_h}:r=25[wc]",
         f"[wc][wm]alphamerge,colorchannelmixer=aa={wave_alpha}[wave]",
         f"[bg][wave]overlay=0:{wave_y}:shortest={1 if is_video else 0}[v0]",
@@ -276,7 +279,10 @@ def main():
     ap.add_argument("--wave-alpha", type=float, default=0.75)
     ap.add_argument("--wave-detail", type=int, default=WAVE_DETAIL,
                     help="px the wave is drawn at before scaling up; lower is softer "
-                         "and smaller (480 default, 1920 = crisp instrument readout)")
+                         "and smaller (1920 = crisp instrument readout)")
+    ap.add_argument("--wave-smooth", type=int, default=WAVE_SMOOTH,
+                    help="frames averaged together; 1 disables, higher is calmer but "
+                         "dissolves the wave into a smudge past about 10")
     ap.add_argument("--no-wave", action="store_true")
     ap.add_argument("--no-titles", action="store_true")
     ap.add_argument("--keep-audio", action="store_true",
@@ -315,13 +321,15 @@ def main():
     graph = build_filtergraph(args.cover, items, args.width, args.height,
                               paper, ink, accent, title_font, label_font,
                               title_size, label_size, wave_h, args.wave_alpha,
-                              is_video, args.preview_at, args.wave_detail)
+                              is_video, args.preview_at, args.wave_detail,
+                              args.wave_smooth)
     if args.no_wave or args.no_titles:
         graph = build_filtergraph(args.cover, [] if args.no_titles else items,
                                   args.width, args.height, paper, ink, accent,
                                   title_font, label_font, title_size, label_size,
                                   wave_h, 0.0 if args.no_wave else args.wave_alpha,
-                                  is_video, args.preview_at, args.wave_detail)
+                                  is_video, args.preview_at, args.wave_detail,
+                              args.wave_smooth)
 
     video = os.path.join(args.out, f"{args.name}.mp4")
     cmd = [FFMPEG, "-y", "-v", "error"]

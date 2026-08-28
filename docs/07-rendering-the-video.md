@@ -60,7 +60,8 @@ the audio that is muxed.
 | 3 | 149px of a 178px box | headroom left for louder passages |
 | 6 | 178px (clipped to the box) | flattens loud and quiet into one shape |
 
-`WAVE_GAIN = 3.0`. Measured at −56.6 dB — the tail of a fade-out — the wave goes flat,
+`WAVE_GAIN = 3.5` — a little above the 3 that was right before smoothing, because
+averaging frames pulls the peaks down. Measured at −56.6 dB — the tail of a fade-out — the wave goes flat,
 which is correct and not a defect: track boundaries land in near-silence, so the wave
 naturally rests exactly when the title changes.
 
@@ -86,8 +87,34 @@ Drawing the wave narrow and scaling it up cuts both the bitrate and the crispnes
 | 480 | 1.87 Mbps | soft-edged, brushstroke-like |
 | 240 | 1.65 Mbps | smeared, loses definition |
 
-`WAVE_DETAIL = 480` is the default: on illustrated covers the softer wave suits the
-artwork better than the sharp one, and it happens to be 30% smaller.
+`WAVE_DETAIL = 160`, below this table's range, because detail alone is not what makes a
+wave restless — see the next section.
+
+## Half the motion was not music
+
+Drawn one frame at a time the wave jumps around in a way that reads as noise rather than
+as the track. Split the movement in two: how much the painted area varies across the
+whole passage (that is the music) against how much it changes between adjacent frames
+(that is jitter). Their ratio says how much of the motion means something.
+
+| Setting | Response | Jitter | Ratio |
+|---|---|---|---|
+| 480, no smoothing | 6.21 | 5.68 | 1.1 |
+| 480, 6 frames | 4.00 | 1.63 | 2.4 |
+| 480, 14 frames | 4.05 | 1.17 | 3.5 |
+| p2p, 6 frames | 3.92 | 0.67 | 5.8 |
+| **160, 6 frames** | **3.95** | **1.59** | **2.5** |
+
+At the default the ratio was 1.1: half of what the eye saw was per-frame noise.
+
+Two of these were rejected on looks despite scoring well, which is the point of checking
+frames and not only numbers. `p2p` won the ratio by drawing almost nothing — 2% coverage,
+a wave too faint to see. Fourteen frames of averaging dissolves the strokes into a haze
+that no longer reads as a waveform. Adding a gaussian blur on top of heavy averaging
+flattened it to a bare line.
+
+`WAVE_SMOOTH = 6` with `WAVE_DETAIL = 160`: painted area 23.2% against 24.2% unsmoothed —
+the same visual weight — with jitter down from 5.68 to 1.75, a 69% reduction.
 
 ## The title must clear the wave box
 
