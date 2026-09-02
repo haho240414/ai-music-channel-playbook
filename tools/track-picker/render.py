@@ -57,46 +57,83 @@ WAVE_DETAIL = 160   # px the wave is drawn at before being scaled up; see docs/0
 WAVE_SMOOTH = 6     # frames averaged together to settle the wave; see docs/07
 WAVE_STYLE = "wave"  # wave | bars | spectrum; see docs/07
 BAR_GAP = 0.27       # share of each bar's slot left empty, for the bars styles
+FPS = 25             # output frame rate; the wave is generated at the same rate
 
 
-def pick_text_side(cover: str, width: int, height: int, paper: str) -> str:
-    """Put the text on the calmer half of the frame.
+# Where a title block can go, as (x, y) fractions of the frame. Bottom-left first:
+# it is the incumbent, and a channel should not drift between episodes without cause.
+TEXT_BOXES = [
+    ("left", "bottom", 0.00, 0.71),
+    ("right", "bottom", 0.42, 0.71),
+    ("left", "top", 0.00, 0.06),
+    ("right", "top", 0.42, 0.06),
+]
 
-    Contrast against an average is not enough on a photograph: measured on one cover the
-    lower-left sat directly on a row of streetlights and washed the label out, while the
-    lower-right (open water) varied a third as much. Compare the two halves of the strip
-    the text occupies and take the steadier one; ties keep the left, which is the
-    convention and keeps a channel consistent across episodes.
+
+def text_box_spread(cover: str, width: int, height: int, paper: str) -> dict:
+    """Luminance standard deviation of each candidate title box.
+
+    A busy box washes text out however well its *average* contrasts, so the measurement
+    that matters is variation inside the box, not its mean.
     """
     base = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
             f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color={paper}")
+    bw, bh = int(width * 0.58), int(height * 0.11)
     spread = {}
-    for side, x in (("left", 0), ("right", int(width * 0.42))):
-        px = _pixels(cover, f"{base},crop={int(width*0.58)}:{int(height*0.11)}:{x}:"
-                            f"{int(height*0.71)},scale=48:10")
+    for side, vpos, fx, fy in TEXT_BOXES:
+        px = _pixels(cover, f"{base},crop={bw}:{bh}:{int(width*fx)}:"
+                            f"{int(height*fy)},scale=48:10")
         if not px:
-            return "left"
+            return {}
         lum = [_srgb_lum(c) for c in px]
         mean = sum(lum) / len(lum)
-        spread[side] = (sum((v - mean) ** 2 for v in lum) / len(lum)) ** 0.5
-    return "right" if spread["right"] < spread["left"] * 0.75 else "left"
+        spread[(side, vpos)] = (sum((v - mean) ** 2 for v in lum) / len(lum)) ** 0.5
+    return spread
+
+
+def pick_text_spot(cover: str, width: int, height: int,
+                   paper: str) -> tuple[str, str]:
+    """Put the text in the calmest of the four candidate boxes.
+
+    Contrast against an average is not enough on a photograph: measured on one cover the
+    lower-left sat directly on a row of streetlights and washed the label out, while the
+    lower-right (open water) varied a third as much.
+
+    Only comparing the two *bottom* halves is not enough either. Measured on a cover
+    whose band of characters spans the full width, both bottom boxes came back busy
+    (sd 0.250 and 0.333) while the empty sky above them measured 0.001 -- 250x calmer,
+    and unreachable by a left/right choice. Ties keep bottom-left, the convention.
+    """
+    spread = text_box_spread(cover, width, height, paper)
+    if not spread:
+        return "left", "bottom"
+    incumbent = spread[("left", "bottom")]
+    best = min(spread, key=spread.get)
+    return best if spread[best] < incumbent * 0.75 else ("left", "bottom")
+
+
+def pick_text_side(cover: str, width: int, height: int, paper: str) -> str:
+    """Horizontal half only, for callers that place the text themselves."""
+    return pick_text_spot(cover, width, height, paper)[0]
 
 
 def layout(width: int, height: int, title_size: int, wave_h: int,
-           side: str = "left") -> dict:
+           side: str = "left", vpos: str = "bottom") -> dict:
     """Where each element sits. Kept in one place so the no-overlap rule is testable.
 
     The wave fills its whole box at full amplitude, so the box top -- not the resting
-    line at its centre -- is what the title has to clear.
+    line at its centre -- is what the title has to clear. A title moved to the top of
+    the frame clears it by construction.
     """
     margin = int(width * 0.068)
+    label_f, title_f = (0.075, 0.116) if vpos == "top" else (0.723, 0.764)
     return {
         # A right-aligned line has to be positioned from the text width, which drawtext
         # only knows at draw time -- hence an expression rather than a number.
         "x": str(margin) if side == "left" else f"w-tw-{margin}",
-        "y_label": int(height * 0.723),
-        "y_title": int(height * 0.764),
-        "title_bottom": int(height * 0.764) + title_size,
+        "y_label": int(height * label_f),
+        "y_title": int(height * title_f),
+        "title_bottom": int(height * title_f) + title_size,
         "wave_top": height - wave_h - int(height * 0.019),
         "wave_bottom": height - int(height * 0.019),
     }
@@ -295,7 +332,8 @@ def shadow_for(ink: str) -> str:
 
 def title_filters(items, width, height, ink, accent, title_font, label_font,
                   title_size, label_size, offset: float = 0.0,
-                  side: str = "left", label_col: str = None) -> list[str]:
+                  side: str = "left", label_col: str = None,
+                  vpos: str = "bottom", per_pass: int = 0) -> list[str]:
     """One label+title pair per track, cross-fading into the next.
 
     The fade is an alpha ramp rather than two overlapping clips: drawtext is evaluated
@@ -303,9 +341,11 @@ def title_filters(items, width, height, ink, accent, title_font, label_font,
     """
     # The text sits ABOVE the wave band, not inside it. At full amplitude the wave
     # reaches the top of its box, and a title placed over it gets struck through.
-    geo = layout(width, height, title_size, 0, side)
+    geo = layout(width, height, title_size, 0, side, vpos)
     x, y_label, y_title = geo["x"], geo["y_label"], geo["y_title"]
-    total = len(items)
+    # With --repeat the same playlist plays again, so the counter has to wrap: a
+    # nine-track episode played twice is "TRACK 01 OF 09" again, not "OF 18".
+    total = per_pass or len(items)
     out = []
     for pos, title, start, end in items:
         # A preview seeks the audio with -ss, so the output timeline restarts at zero
@@ -325,7 +365,8 @@ def title_filters(items, width, height, ink, accent, title_font, label_font,
         common = (f":enable='{window}':alpha='{alpha}':x={x}"
                   f":shadowcolor={sh}:shadowx=2:shadowy=2")
         out.append(
-            f"drawtext=fontfile='{label_font}':text='{esc('TRACK %02d OF %02d' % (pos, total))}'"
+            f"drawtext=fontfile='{label_font}':text='"
+            f"{esc('TRACK %02d OF %02d' % ((pos - 1) % total + 1, total))}'"
             f":fontsize={label_size}:fontcolor={label_col or accent}{common}:y={y_label}")
         out.append(
             f"drawtext=fontfile='{title_font}':text='{esc(title)}'"
@@ -334,7 +375,8 @@ def title_filters(items, width, height, ink, accent, title_font, label_font,
 
 
 def wave_mask(width: int, wave_h: int, detail: int, smooth: int,
-              style: str = WAVE_STYLE) -> str:
+              style: str = WAVE_STYLE, gap: float = BAR_GAP,
+              fps: int = FPS) -> str:
     """The filter chain producing a white-on-black mask of the visualisation.
 
     Three shapes, and they are not interchangeable:
@@ -356,16 +398,46 @@ def wave_mask(width: int, wave_h: int, detail: int, smooth: int,
                f":colors=white,format=gray")
     else:
         src = (f"volume={WAVE_GAIN},showwaves=s={detail}x{wave_h}:mode=cline"
-               f":colors=white:rate=25,format=gray{smoothing}")
+               f":colors=white:rate={fps},format=gray{smoothing}")
     if style == "wave":
         return f"{src},scale={width}:{wave_h}:flags=bicubic"
     # Blocks: nearest-neighbour keeps the column edges hard, then a stripe expression
     # blanks part of every slot so the blocks read as separate bars.
     slot = max(int(round(width / max(detail, 1))), 3)
-    keep = max(int(round(slot * (1 - BAR_GAP))), 2)
+    keep = max(int(round(slot * (1 - gap))), 2)
     return (f"{src},scale={width}:{wave_h}:flags=neighbor,"
             + r"geq=lum='if(lt(mod(X\," + str(slot) + r")\," + str(keep)
             + r")\,p(X\,Y)\,0)'")
+
+
+def bar_origin(width: int, box_w: int, where: str) -> int:
+    """Left edge of the wave box inside the frame.
+
+    A box narrower than the frame has to be placed deliberately: the reference
+    channels sit it dead centre under the title, not flush against the left edge
+    where the full-width default leaves it.
+    """
+    if box_w >= width:
+        return 0
+    if where == "left":
+        return 0
+    if where == "right":
+        return width - box_w
+    if where == "center":
+        return (width - box_w) // 2
+    return max(0, min(int(where), width - box_w))
+
+
+def repeat_tracks(tracks: list[str], times: int) -> list[str]:
+    """The play order for `times` passes of the same playlist.
+
+    A short playlist is padded by playing it again rather than by generating filler:
+    the second pass gets its own titles and its own chapter entries, so a listener who
+    seeks into it still sees which track is playing.
+    """
+    if times < 1:
+        raise ValueError("repeat must be at least 1")
+    return list(tracks) * times
 
 
 def build_filtergraph(cover, items, width, height, paper, ink, accent,
@@ -373,10 +445,15 @@ def build_filtergraph(cover, items, width, height, paper, ink, accent,
                       wave_h, wave_alpha, is_video, offset: float = 0.0,
                       detail: int = WAVE_DETAIL, smooth: int = WAVE_SMOOTH,
                       side: str = "left", label_col: str = None,
-                      style: str = WAVE_STYLE) -> str:
+                      style: str = WAVE_STYLE, gap: float = BAR_GAP,
+                      fps: int = FPS, wave_w: int = 0, wave_x: str = "center",
+                      wave_bottom: int = 0, vpos: str = "bottom",
+                      per_pass: int = 0) -> str:
     scale = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
              f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color={paper},setsar=1")
-    wave_y = height - wave_h - int(height * 0.019)
+    wave_y = height - wave_h - (wave_bottom or int(height * 0.019))
+    box_w = wave_w or width
+    wave_left = bar_origin(width, box_w, wave_x)
     parts = [
         f"[0:v]{scale}[bg]",
         # White wave -> luminance mask -> tint. Overlaying showwaves directly would
@@ -384,14 +461,14 @@ def build_filtergraph(cover, items, width, height, paper, ink, accent,
         # Drawn narrow, averaged over several frames, then scaled up. At full width and
         # one frame the wave is a crisp instrument readout: it costs 78% of the file and
         # half its motion is per-frame noise rather than music. See docs/07.
-        f"[1:a]{wave_mask(width, wave_h, detail, smooth, style)}[wm]",
-        f"color=c={accent}:s={width}x{wave_h}:r=25[wc]",
+        f"[1:a]{wave_mask(box_w, wave_h, detail, smooth, style, gap, fps)}[wm]",
+        f"color=c={accent}:s={box_w}x{wave_h}:r={fps}[wc]",
         f"[wc][wm]alphamerge,colorchannelmixer=aa={wave_alpha}[wave]",
-        f"[bg][wave]overlay=0:{wave_y}:shortest={1 if is_video else 0}[v0]",
+        f"[bg][wave]overlay={wave_left}:{wave_y}:shortest={1 if is_video else 0}[v0]",
     ]
     chain = ",".join(title_filters(items, width, height, ink, accent,
                                    title_font, label_font, title_size, label_size,
-                                   offset, side, label_col))
+                                   offset, side, label_col, vpos, per_pass))
     parts.append(f"[v0]{chain}[v]" if chain else "[v0]null[v]")
     return ";".join(parts)
 
@@ -432,11 +509,28 @@ def main():
                     default=WAVE_STYLE,
                     help="wave = mirrored waveform, bars = the same amplitude as "
                          "blocks, spectrum = a frequency equaliser")
+    ap.add_argument("--text-vpos", choices=("auto", "top", "bottom"), default="auto",
+                    help="which end of the frame the title block sits at")
     ap.add_argument("--text-side", choices=("auto", "left", "right"), default="auto",
                     help="which half of the frame the title sits in")
     ap.add_argument("--wave-smooth", type=int, default=WAVE_SMOOTH,
                     help="frames averaged together; 1 disables, higher is calmer but "
                          "dissolves the wave into a smudge past about 10")
+    ap.add_argument("--repeat", type=int, default=1,
+                    help="play the whole playlist N times (short playlists)")
+    ap.add_argument("--fps", type=int, default=FPS)
+    ap.add_argument("--bar-count", type=int, default=0,
+                    help="bars/spectrum: how many bars across the box "
+                         "(overrides --wave-detail)")
+    ap.add_argument("--bar-gap", type=float, default=BAR_GAP,
+                    help="share of each bar's slot left empty (0.5 = bar as wide "
+                         "as the gap beside it)")
+    ap.add_argument("--wave-width", type=int, default=0,
+                    help="width of the wave box in px (0 = full frame)")
+    ap.add_argument("--wave-x", default="center",
+                    help="left | right | center | px, for a box narrower than the frame")
+    ap.add_argument("--wave-bottom", type=int, default=0,
+                    help="px from the bottom edge to the wave box (0 = 1.9%% of height)")
     ap.add_argument("--no-wave", action="store_true")
     ap.add_argument("--no-titles", action="store_true")
     ap.add_argument("--keep-audio", action="store_true",
@@ -452,11 +546,19 @@ def main():
     if not os.path.exists(args.cover):
         raise SystemExit(f"cover not found: {args.cover}")
 
+    if args.repeat < 1:
+        raise SystemExit("--repeat must be at least 1")
+    if args.fps < 1:
+        raise SystemExit("--fps must be at least 1")
+
     os.makedirs(args.out, exist_ok=True)
-    tracks = ordered_tracks(args.playlist)
+    once = ordered_tracks(args.playlist)
+    tracks = repeat_tracks(once, args.repeat)
     items = spans(tracks)
     total = items[-1][3]
-    print(f"[1/4] {len(tracks)} tracks, {int(total // 60)}m {int(total % 60)}s")
+    passes = f" x{args.repeat}" if args.repeat > 1 else ""
+    print(f"[1/4] {len(once)} tracks{passes}, "
+          f"{int(total // 60)}m {int(total % 60)}s")
 
     paper, ink, accent, label_col = sample_colors(args.cover, args.width, args.height)
     paper, ink = args.paper or paper, args.ink or ink
@@ -475,33 +577,44 @@ def main():
     wave_h = args.wave_height or int(args.height * 0.120)
     is_video = os.path.splitext(args.cover)[1].lower() in VIDEO_EXT
 
-    side = (pick_text_side(args.cover, args.width, args.height, paper)
-            if args.text_side == "auto" else args.text_side)
-    print(f"       text on the {side}")
+    box_w = args.wave_width or args.width
+    detail = args.bar_count or args.wave_detail
+    if args.bar_count and args.wave_style == "wave":
+        print("       --bar-count has no effect on the plain wave style")
+
+    auto_side, auto_vpos = pick_text_spot(args.cover, args.width, args.height, paper)
+    side = auto_side if args.text_side == "auto" else args.text_side
+    vpos = auto_vpos if args.text_vpos == "auto" else args.text_vpos
+    print(f"       text at {vpos} {side}")
     graph = build_filtergraph(args.cover, items, args.width, args.height,
                               paper, ink, accent, title_font, label_font,
                               title_size, label_size, wave_h, args.wave_alpha,
-                              is_video, args.preview_at, args.wave_detail,
-                              args.wave_smooth, side, label_col, args.wave_style)
+                              is_video, args.preview_at, detail,
+                              args.wave_smooth, side, label_col, args.wave_style,
+                              args.bar_gap, args.fps, box_w, args.wave_x,
+                              args.wave_bottom, vpos, len(once))
     if args.no_wave or args.no_titles:
         graph = build_filtergraph(args.cover, [] if args.no_titles else items,
                                   args.width, args.height, paper, ink, accent,
                                   title_font, label_font, title_size, label_size,
                                   wave_h, 0.0 if args.no_wave else args.wave_alpha,
-                                  is_video, args.preview_at, args.wave_detail,
-                              args.wave_smooth, side, label_col, args.wave_style)
+                                  is_video, args.preview_at, detail,
+                                  args.wave_smooth, side, label_col,
+                                  args.wave_style, args.bar_gap, args.fps,
+                                  box_w, args.wave_x, args.wave_bottom,
+                                  vpos, len(once))
 
     video = os.path.join(args.out, f"{args.name}.mp4")
     cmd = [FFMPEG, "-y", "-v", "error"]
     if is_video:
         cmd += ["-stream_loop", "-1", "-i", args.cover]
     else:
-        cmd += ["-loop", "1", "-framerate", "25", "-i", args.cover]
+        cmd += ["-loop", "1", "-framerate", str(args.fps), "-i", args.cover]
     if args.preview_at:
         cmd += ["-ss", str(args.preview_at)]
     cmd += ["-i", audio, "-filter_complex", graph, "-map", "[v]", "-map", "1:a",
             "-c:v", "libx264", "-preset", args.preset, "-crf", str(args.crf),
-            "-pix_fmt", "yuv420p", "-r", "25",
+            "-pix_fmt", "yuv420p", "-r", str(args.fps),
             "-c:a", "aac", "-b:a", "256k", "-shortest",
             "-movflags", "+faststart"]
     if args.preview:

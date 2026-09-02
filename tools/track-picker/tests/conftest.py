@@ -118,3 +118,31 @@ def make_track(title="Track", bpm=100.0, camelot="8B", lufs=-15.0, true_peak=-1.
                       "dynamics": 10.0, "stereo": 6.0, "loudness": 10.0},
         "defects": [],
     }
+
+@pytest.fixture(scope="session")
+def covers(tmp_path_factory):
+    """Synthetic covers, each engineered to force one placement decision."""
+    d = tmp_path_factory.mktemp("covers")
+    p = lambda name: str(d / name)  # noqa: E731
+
+    # Cream frame, with a band of characters spanning the FULL width near the bottom.
+    # Both bottom boxes are busy; the only calm space is the top. This is the shape the
+    # measured episode cover had, and the left/right-only chooser could not see it.
+    _render(p("busy_bottom.png"), "-f", "lavfi",
+            "-i", "color=c=0xF5F4F0:s=1920x1080:d=1",
+            "-f", "lavfi", "-i", "nullsrc=s=1920x140:d=1",
+            "-filter_complex",
+            "[1]geq=r='if(lt(mod(X,160),110),20,245)':g='if(lt(mod(X,160),110),20,245)'"
+            ":b='if(lt(mod(X,160),110),20,245)'[band];[0][band]overlay=0:790",
+            "-frames:v", "1")
+
+    # The same band, but only under the LEFT half: the right stays calm, so the
+    # left/right choice is still the right answer and must not be overridden.
+    _render(p("busy_left.png"), "-f", "lavfi",
+            "-i", "color=c=0xF5F4F0:s=1920x1080:d=1",
+            "-f", "lavfi", "-i", "nullsrc=s=800x140:d=1",
+            "-filter_complex",
+            "[1]geq=r='if(lt(mod(X,160),110),20,245)':g='if(lt(mod(X,160),110),20,245)'"
+            ":b='if(lt(mod(X,160),110),20,245)'[band];[0][band]overlay=0:790",
+            "-frames:v", "1")
+    return {"busy_bottom": p("busy_bottom.png"), "busy_left": p("busy_left.png")}

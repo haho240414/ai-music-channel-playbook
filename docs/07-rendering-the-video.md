@@ -86,10 +86,22 @@ mean of the title area, but a photograph is not uniform: a lit window directly b
 the small label erases it while the average still passes. The shadow is drawn in the
 opposite polarity to the text and does not depend on the average.
 
-**Put the text on the calmer half.** On one cover the lower-left sat on a row of
+**Put the text in the calmest box.** On one cover the lower-left sat on a row of
 streetlights while the lower-right was open water that varied a third as much
-(σ 0.021 against 0.074). `pick_text_side` compares the two halves and takes the steadier
-one; ties keep the left, so a channel stays consistent between episodes.
+(σ 0.021 against 0.074), so the first version of this compared the two lower halves and
+took the steadier one.
+
+That is not enough, and a later cover showed why. Its subject was a band of characters
+spanning the **full width** of the lower third, so both lower boxes came back busy —
+σ 0.250 on the left, 0.333 on the right — while the empty space above them measured
+σ 0.001, some 250× calmer. A left/right chooser cannot reach it, and the title landed on
+the artwork whichever half it picked. `pick_text_spot` now measures four boxes (top and
+bottom × left and right). Ties keep bottom-left, so a channel stays consistent between
+episodes, and it only moves when another box is at least a quarter calmer.
+
+The lesson generalises past this one function: a chooser can only be as good as the
+options it is allowed to consider, and a confident measurement over the wrong two
+candidates looks exactly like a correct answer.
 
 ## Three shapes, and they are not interchangeable
 
@@ -120,8 +132,50 @@ Measured over the same passage, same metric as the smoothing section:
 The dB axis that makes it look like an equaliser is the same thing that flattens its
 dynamics, so it settles into a near-fixed spectral silhouette: busy to look at, saying
 little. Its ratio of response to jitter is the best of the three, which is the same trap
-a sparse `p2p` wave set earlier — a ratio flatters anything that barely moves. `bars`
-keeps the waveform's responsiveness and still reads as bars.
+a sparse `p2p` wave set earlier — a ratio flatters anything that barely moves. At full
+width, `bars` keeps the waveform's responsiveness and still reads as bars.
+
+### That conclusion does not survive a low bar count
+
+Those numbers were all taken at full width and `--wave-detail 160`, and every one of
+them measures *how much the picture changes*. None of them measures whether the bars
+differ **from each other** — which is the entire point of a bar meter, and the thing a
+reader actually looks at.
+
+Measured again at a 16-bar block (16 bars, gap 0.5, box 384×67, the geometry of a
+reference channel), sampling each bar's lit height per frame:
+
+| Style | Frame-to-frame move | Cross-bar spread | Cross-bar range |
+|---|---|---|---|
+| `bars` | 1.72 px | 2.50 px | 9.1 px |
+| `spectrum` | 0.43 px | 12.27 px | 55.8 px |
+
+`bars` still wins on movement by 4×, and it is the wrong win. At 16 columns every bar
+sits at nearly the same height (σ 2.50 px in a 67 px box) and shimmers in place, and
+`showwaves mode=cline` draws a *centred* line whose thickness is the amplitude, with an
+anti-aliased falloff — so the blocks come out as soft smudges floating mid-band rather
+than bars standing on a baseline. `spectrum` uses 83% of the box (55.8 px of 67) and its
+bars are hard-edged and bottom-anchored, because `showfreqs mode=bar` draws them that
+way.
+
+So the style depends on the bar count, and the guidance splits:
+
+- **full width / high detail** → `bars`, for the responsiveness measured above
+- **a countable block of bars** → `spectrum`, and set `--wave-smooth` deliberately
+
+`spectrum`'s own temporal averaging is what costs it movement, and it is adjustable.
+Measured at the same 16-bar geometry:
+
+| `--wave-smooth` | Movement | Cross-bar spread |
+|---|---|---|
+| 1 | 55.7 px/s | 13.10 px |
+| 2 | 31.3 px/s | 12.83 px |
+| 3 | 22.6 px/s | 12.64 px |
+| 6 (default) | 12.9 px/s | 12.27 px |
+
+Smoothing costs almost no shape (13.10 → 12.27 px across the whole range) and nearly all
+the movement (55.7 → 12.9 px/s). `3` is the useful setting: 1.75× the default's movement,
+still settled.
 
 ## Matching the wave to the channel
 
@@ -247,3 +301,31 @@ it.
 One catch: `--export-format wav` writes PCM, which has no tag in an MP4 container.
 Concatenating a wav export into `.m4a` fails outright with *"Could not find tag for codec
 pcm_s16le"*. The intermediate container follows the source extension.
+
+## Playing a short playlist twice
+
+An episode does not always reach the runtime it needs. `--repeat N` plays the whole
+playlist again rather than padding it with filler, and the second pass is a first-class
+part of the video: its own title cards, its own chapter entries. Someone who seeks into
+minute 30 of a 50-minute episode still sees which track is playing.
+
+The counter has to wrap with it. Nine tracks played twice is `TRACK 01 OF 09` again —
+not `TRACK 10 OF 18`, which is what the first version rendered, and which tells a viewer
+the episode has eighteen different tracks when it has nine.
+
+## Frame rate
+
+`--fps` sets the output rate **and** the rate the wave is generated at. They are one
+setting for a reason: the visualiser draws per frame, so leaving it at 25 while the
+output runs at 30 makes ffmpeg duplicate every fifth frame and the wave stutters against
+music that does not.
+
+## Placing the wave box
+
+By default the wave spans the frame. `--wave-width` narrows it, `--wave-x`
+(`left`/`right`/`center`/px) places it, `--wave-bottom` sets the margin under it, and
+`--bar-count` / `--bar-gap` set the geometry inside it. A 16-bar block 384 px wide with
+`--bar-gap 0.5` gives 24 px slots — 12 px of bar, 12 px of gap.
+
+A box narrower than the frame has to be placed deliberately. Left at the full-width
+default's origin it hugs the left edge, which is almost never where a bar block belongs.

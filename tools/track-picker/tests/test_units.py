@@ -18,6 +18,7 @@ from export import plan_gains, timestamp_lines  # noqa: E402
 from score import normalize_title, pick_best_takes, score_cohort  # noqa: E402
 from sequence import build_playlist, camelot_distance  # noqa: E402
 from run import _leading_index, filename_to_title  # noqa: E402
+from conftest import needs_ffmpeg  # noqa: E402
 import render  # noqa: E402
 
 from conftest import make_track  # noqa: E402
@@ -980,3 +981,145 @@ def test_bar_slot_leaves_a_visible_gap():
     slot, keep = (int(x) for x in re.findall(r"mod\(X\\,(\d+)\)\\,(\d+)", m)[0])
     assert 0 < keep < slot, "every slot must be part bar, part gap"
     assert keep / slot == pytest.approx(1 - render.BAR_GAP, abs=0.06)
+
+
+# --- Repeat, frame rate, and bar geometry --------------------------------------
+
+
+def test_repeat_plays_the_whole_playlist_again():
+    """A short playlist is padded by replaying it, not by generating filler."""
+    once = ["a.wav", "b.wav", "c.wav"]
+    assert render.repeat_tracks(once, 1) == once
+    assert render.repeat_tracks(once, 2) == once + once
+    assert render.repeat_tracks(once, 2)[:3] == once, "pass two starts after pass one"
+
+
+def test_repeat_below_one_is_rejected():
+    with pytest.raises(ValueError):
+        render.repeat_tracks(["a.wav"], 0)
+
+
+def test_repeated_tracks_get_their_own_titles_and_chapters():
+    """Someone seeking into the second pass still needs to see what is playing, so the
+    spans -- and therefore the drawtext windows and the chapter list -- must cover it."""
+    tracks = ["01 - One.wav", "02 - Two.wav"]
+    durations = {"01 - One.wav": 60.0, "02 - Two.wav": 90.0}
+    real = render.duration_of
+    render.duration_of = lambda p: durations[os.path.basename(p)]
+    try:
+        items = render.spans(render.repeat_tracks(tracks, 2))
+    finally:
+        render.duration_of = real
+    assert len(items) == 4
+    assert [i[1] for i in items] == ["One", "Two", "One", "Two"]
+    assert [i[2] for i in items] == [0.0, 60.0, 150.0, 210.0]
+    assert items[-1][3] == 300.0, "two passes run twice as long as one"
+    assert len(render.chapter_lines(items)) == 4
+
+
+def test_frame_rate_reaches_the_wave_generator():
+    """The wave is drawn per frame. Leaving it at 25 while the output runs at 30 makes
+    ffmpeg duplicate frames, and the wave stutters against the music."""
+    assert "rate=30," in render.wave_mask(1920, 130, 160, 6, "wave", fps=30)
+    assert ":r=30[wc]" in render.build_filtergraph(
+        "c.png", [], 1920, 1080, "0x000000", "0xFFFFFF", "0xFF0000",
+        "f.ttf", "f.ttf", 50, 20, 130, 0.75, False, fps=30)
+
+
+def test_bar_gap_widens_the_gap_between_bars():
+    tight = render.wave_mask(1920, 130, 64, 3, "bars", gap=0.1)
+    loose = render.wave_mask(1920, 130, 64, 3, "bars", gap=0.5)
+    pat = r"mod\(X\\,(\d+)\)\\,(\d+)"
+    tight_slot, tight_keep = (int(x) for x in re.findall(pat, tight)[0])
+    loose_slot, loose_keep = (int(x) for x in re.findall(pat, loose)[0])
+    assert tight_slot == loose_slot, "the gap changes the bar, not the spacing"
+    assert loose_keep < tight_keep
+
+
+def test_wave_box_narrower_than_the_frame_is_centred():
+    """The reference channels sit a narrow bar block under the title, centred. Left as
+    the full-width default's origin it would hug the frame edge instead."""
+    graph = render.build_filtergraph(
+        "c.png", [], 1920, 1080, "0x000000", "0xFFFFFF", "0xFF0000",
+        "f.ttf", "f.ttf", 50, 20, 67, 0.75, False,
+        style="bars", wave_w=384, wave_x="center")
+    assert "s=384x67" in graph, "the wave is generated at the box width, not the frame"
+    assert "overlay=768:" in graph
+
+
+@pytest.mark.parametrize("where,expected", [
+    ("left", 0), ("center", 768), ("right", 1536), ("100", 100),
+])
+def test_bar_origin_places_the_box(where, expected):
+    assert render.bar_origin(1920, 384, where) == expected
+
+
+def test_a_full_width_box_always_starts_at_zero():
+    for where in ("left", "center", "right", "900"):
+        assert render.bar_origin(1920, 1920, where) == 0
+
+
+def test_bar_count_and_gap_reproduce_a_measured_reference():
+    """16 bars, 12 px wide, 12 px apart, in a 384 px box -- the geometry measured off
+    the reference episode. If the slot maths drifts, this stops matching."""
+    m = render.wave_mask(384, 67, 16, 4, "bars", gap=0.5)
+    slot, keep = (int(x) for x in re.findall(r"mod\(X\\,(\d+)\)\\,(\d+)", m)[0])
+    assert (slot, keep) == (24, 12)
+
+
+# --- Title placement and the repeat counter -------------------------------------
+
+
+def test_the_track_counter_wraps_on_a_repeated_playlist():
+    """Nine tracks played twice is "TRACK 01 OF 09" again, not "TRACK 10 OF 18"."""
+    items = [(i, f"T{i}", (i - 1) * 60.0, i * 60.0) for i in range(1, 19)]
+    filters = render.title_filters(items, 1920, 1080, "0x000000", "0xFF0000",
+                                   "f.ttf", "f.ttf", 54, 20, per_pass=9)
+    labels = re.findall(r"TRACK (\d+) OF (\d+)", "".join(filters))
+    assert [n for n, _ in labels] == ["%02d" % (i % 9 + 1) for i in range(18)]
+    assert {t for _, t in labels} == {"09"}
+
+
+def test_without_repeat_the_counter_still_counts_every_track():
+    items = [(i, f"T{i}", (i - 1) * 60.0, i * 60.0) for i in range(1, 4)]
+    filters = render.title_filters(items, 1920, 1080, "0x000000", "0xFF0000",
+                                   "f.ttf", "f.ttf", 54, 20)
+    assert re.findall(r"TRACK (\d+) OF (\d+)", "".join(filters)) == [
+        ("01", "03"), ("02", "03"), ("03", "03")]
+
+
+def test_a_top_title_clears_the_wave_box():
+    """Moved to the top, the title cannot collide with the wave whatever its height."""
+    geo = render.layout(1920, 1080, 54, 300, "left", "top")
+    assert geo["title_bottom"] < geo["wave_top"]
+    assert geo["y_label"] < geo["y_title"], "the label sits above the title"
+
+
+def test_bottom_stays_the_default_geometry():
+    assert render.layout(1920, 1080, 54, 129) == render.layout(
+        1920, 1080, 54, 129, "left", "bottom")
+
+
+@needs_ffmpeg
+def test_a_full_width_band_pushes_the_title_to_the_top(covers):
+    """Measured on a real cover: both bottom boxes came back busy (sd 0.250 and 0.333)
+    while the empty space above measured 0.001. A left/right-only chooser cannot reach
+    it, and the title landed on the artwork."""
+    spread = render.text_box_spread(covers["busy_bottom"], 1920, 1080, "0xF5F4F0")
+    assert spread[("left", "top")] < spread[("left", "bottom")] * 0.75
+    assert spread[("right", "top")] < spread[("right", "bottom")] * 0.75
+    assert render.pick_text_spot(covers["busy_bottom"], 1920, 1080,
+                                 "0xF5F4F0")[1] == "top"
+
+
+@needs_ffmpeg
+def test_a_calm_bottom_right_is_still_chosen_over_the_top(covers):
+    """The top must not become a blanket default: where the existing left/right choice
+    already works, it has to keep working."""
+    side, vpos = render.pick_text_spot(covers["busy_left"], 1920, 1080, "0xF5F4F0")
+    assert (side, vpos) == ("right", "bottom")
+
+
+@needs_ffmpeg
+def test_pick_text_side_still_answers_with_a_half(covers):
+    assert render.pick_text_side(covers["busy_left"], 1920, 1080, "0xF5F4F0") == "right"
